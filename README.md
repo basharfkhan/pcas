@@ -1,4 +1,4 @@
-# PCAS — Predictive Collision Awareness System
+# PCAS: Predictive Collision Awareness System
 
 Learned conflict warning for airports **without a control tower**, where most midair
 collisions happen and where certified collision avoidance systems are least useful.
@@ -38,7 +38,7 @@ probabilistic prediction, and **ACAS Xu** targets exactly this airspace for dron
 | Stage | Data | Why |
 |---|---|---|
 | Model training and evaluation | **ADS-B** (TrajAir benchmark, KBTP; OpenSky later) | Real flights, high sample rate, published baselines to compare against |
-| Natural experiment + live demo | **VATSIM datafeed** | The only source where *controller presence is a variable* — the same airport is uncontrolled one hour and staffed the next |
+| Natural experiment + live demo | **VATSIM datafeed** | The only source where *controller presence is a variable*: the same airport is uncontrolled one hour and staffed the next |
 
 The model is a multi-agent Transformer: attention over time within each aircraft's track,
 and attention across aircraft in the same scene, predicting several possible futures with
