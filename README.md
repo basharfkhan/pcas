@@ -10,7 +10,7 @@ collisions happen and where certified collision avoidance systems are least usef
 Most US airports have no tower. Pilots there separate themselves by looking out the window
 and announcing their positions on a shared frequency. Meanwhile:
 
-- **TCAS II** — the certified system — is carried mainly by airliners and larger turbine
+- **TCAS II** the certified system - is carried mainly by airliners and larger turbine
   aircraft, not the trainers and light singles flying the pattern at these fields.
 - Even where it is carried, TCAS II **inhibits resolution advisories below roughly 1,000 ft
   AGL**, because telling an aircraft to descend near the ground is dangerous. The traffic
@@ -28,7 +28,7 @@ closure-rate baseline. Trajectory error (minADE/minFDE) is a supporting metric, 
 result.
 
 This is a research prototype, not a safety system. The direction is the same one the
-industry is already taking — **ACAS X**, TCAS's successor, replaces geometric logic with
+industry is already taking - **ACAS X**, TCAS's successor, replaces geometric logic with
 probabilistic prediction, and **ACAS Xu** targets exactly this airspace for drones.
 
 *Not affiliated with, or related to, the discontinued Zaon PCAS product.*
@@ -62,10 +62,10 @@ carries the analysis and the live demo; ADS-B carries the quantitative results.
 
 ## The collector
 
-Polls the public VATSIM datafeed every 15 s (its refresh rate — the config refuses to go
+Polls the public VATSIM datafeed every 15 s (its refresh rate - the config refuses to go
 faster) and appends to date-partitioned Parquet. Pilot rows keep position, altitude,
 groundspeed, heading and flight plan; controller rows record which facilities are online.
-The free-text `name` field on each connection is **not stored** — only the numeric CID, so
+The free-text `name` field on each connection is **not stored**, only the numeric CID, so
 one aircraft's samples can be stitched into a track.
 
 ```bash
@@ -83,7 +83,7 @@ $PCAS_DATA_DIR/
 ```
 
 Configure in `configs/collector.yaml`, or override the destination with `PCAS_DATA_DIR`.
-The default data directory sits outside OneDrive on purpose — this grows by tens of MB per
+The default data directory sits outside OneDrive on purpose, this grows by tens of MB per
 day and syncing every flush would thrash the sync client.
 
 Start it early: the controlled-vs-uncontrolled analysis needs weeks of accumulated history.
@@ -101,7 +101,7 @@ Start it early: the controlled-vs-uncontrolled analysis needs weeks of accumulat
 
 ## Data sources and terms
 
-- **VATSIM datafeed** — public status/data endpoints, polled no faster than every 15 s per
+- **VATSIM datafeed**: public status/data endpoints, polled no faster than every 15 s per
   VATSIM's guidance. Review their data usage terms before publishing the live demo.
-- **TrajAir** — general aviation trajectory dataset (CMU AirLab, KBTP), cite on use.
-- **OpenSky Network** — historical access requires a research account.
+- **TrajAir**: general aviation trajectory dataset (CMU AirLab, KBTP), cite on use.
+- **OpenSky Network**: historical access requires a research account.
