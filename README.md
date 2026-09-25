@@ -88,10 +88,47 @@ day and syncing every flush would thrash the sync client.
 
 Start it early: the controlled-vs-uncontrolled analysis needs weeks of accumulated history.
 
+## The ADS-B pipeline
+
+Two tracks, deliberately kept separate.
+
+**1. TrajAir's `processed_data`, for comparability.** Scene files are already in an
+airport-centred frame (km, 1 Hz), so the loader only converts to metres. Used with the
+dataset's own train/test split so numbers line up with published results (TrajAirNet,
+[ASCENT](https://arxiv.org/abs/2603.16550)).
+
+That split leaks, and we measured it: scene files are numbered with no date, and the 70/30
+split is random over scenes, so **all 7 days of `7days1` appear on both sides**. A model
+can be tested on the same day's traffic, often the same aircraft in the same pattern, that
+it trained on. Published numbers on this split should be read with that in mind.
+
+**2. Our own pipeline from `raw_data`, for the honest numbers.** The raw CSVs are one file
+per day with absolute UTC timestamps, so rebuilding from them gives real dates, real times
+(conflict labelling needs them to pair aircraft), and visible filtering choices:
+
+| Step | Rule |
+|---|---|
+| Frame | lat/lon to metres, x along the runway (`geo.py`) |
+| Ground | drop samples within 30 m of the field elevation, itself estimated from the data because the raw altitudes are not reliably MSL |
+| Terminal area | keep traffic within 15 km; the receiver hears enroute aircraft out to 110 km |
+| Gaps | split a track at any hole over 5 s instead of interpolating across it |
+| Resample | interpolate onto whole seconds, 1 Hz |
+| Frozen tracks | drop tracks whose whole path is under 200 m (stuck transponders) |
+
+On `7days1` (7 days): **375 scenes, 17,683 windows, 6,097 of them multi-agent.** Windows are
+11 s observed and 120 s predicted at 10 s steps, matching TrajAirNet's defaults.
+
+Scene ids carry the date (`2020-09-24_2031`), so day-based and chronological splits read it
+straight off the name and cannot leak a day across both sides.
+
+**Known issue:** the frozen-track filter works per track, so a track that moves overall but
+freezes for a stretch still gets through. A per-window check belongs with the baselines,
+where a stationary target would otherwise flatter every metric.
+
 ## Roadmap
 
 - [x] Repo scaffold, CI, VATSIM collector
-- [ ] ADS-B pipeline: local ENU coordinates, scene building, day-based splits (no window leakage)
+- [x] ADS-B pipeline: runway-relative metres, scene building, day-based splits (no window leakage)
 - [ ] Baselines: constant velocity, constant turn rate, Kalman, LSTM, **TCAS-style closure-rate alerting**
 - [ ] Multi-agent Transformer with social attention
 - [ ] Multimodal predictions with calibrated uncertainty
