@@ -6,8 +6,9 @@ venv/
 .pytest_cache/
 .ruff_cache/
 
-# Collected and downloaded data never goes in git
-data/
+# Collected and downloaded data never goes in git. Anchored to the repo root: a bare
+# "data/" also matches pcas/data/, which silently dropped the whole data package.
+/data/
 *.parquet
 *.log
 

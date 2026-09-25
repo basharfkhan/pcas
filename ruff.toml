@@ -3,3 +3,8 @@ target-version = "py311"
 
 [lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[lint.isort]
+# Pinned explicitly: without it, whether `pcas` counts as first-party depends on the
+# checkout, so local and CI runs disagreed.
+known-first-party = ["pcas"]
