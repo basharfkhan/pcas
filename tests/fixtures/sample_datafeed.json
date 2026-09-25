@@ -1,0 +1,104 @@
+{
+  "general": {
+    "version": 3,
+    "update_timestamp": "2026-09-25T14:03:15.0000000Z",
+    "connected_clients": 4
+  },
+  "pilots": [
+    {
+      "cid": 1000001,
+      "name": "Some Pilot",
+      "callsign": "N172SP",
+      "latitude": 40.7769,
+      "longitude": -79.9498,
+      "altitude": 1800,
+      "groundspeed": 95,
+      "heading": 267,
+      "transponder": "1200",
+      "qnh_i_hg": 30.02,
+      "flight_plan": {
+        "flight_rules": "V",
+        "aircraft_short": "C172",
+        "departure": "KBTP",
+        "arrival": "KBTP"
+      },
+      "logon_time": "2026-09-25T13:40:00.0000000Z",
+      "last_updated": "2026-09-25T14:03:11.0000000Z"
+    },
+    {
+      "cid": 1000002,
+      "name": "Another Pilot",
+      "callsign": "DAL123",
+      "latitude": 33.6407,
+      "longitude": -84.4277,
+      "altitude": 35000,
+      "groundspeed": 461,
+      "heading": 90,
+      "transponder": "4512",
+      "qnh_i_hg": 29.92,
+      "flight_plan": {
+        "flight_rules": "I",
+        "aircraft_short": "B738",
+        "departure": "KATL",
+        "arrival": "KJFK"
+      },
+      "logon_time": "2026-09-25T12:10:00.0000000Z",
+      "last_updated": "2026-09-25T14:03:09.0000000Z"
+    },
+    {
+      "cid": 1000003,
+      "name": "No Position Pilot",
+      "callsign": "N999XX",
+      "latitude": null,
+      "longitude": null,
+      "altitude": 0,
+      "groundspeed": 0,
+      "heading": 0,
+      "transponder": "0000",
+      "qnh_i_hg": 29.92,
+      "flight_plan": null,
+      "logon_time": "2026-09-25T14:02:00.0000000Z",
+      "last_updated": "2026-09-25T14:03:00.0000000Z"
+    }
+  ],
+  "controllers": [
+    {
+      "cid": 2000001,
+      "name": "Some Controller",
+      "callsign": "BTP_TWR",
+      "frequency": "128.325",
+      "facility": 4,
+      "rating": 3,
+      "visual_range": 50,
+      "logon_time": "2026-09-25T13:30:00.0000000Z",
+      "last_updated": "2026-09-25T14:03:12.0000000Z"
+    },
+    {
+      "cid": 2000003,
+      "name": "Some Observer",
+      "callsign": "N238CT",
+      "frequency": "199.998",
+      "facility": 0,
+      "rating": 1,
+      "visual_range": 20,
+      "logon_time": "2026-09-25T13:55:00.0000000Z",
+      "last_updated": "2026-09-25T14:03:05.0000000Z"
+    }
+  ],
+  "atis": [
+    {
+      "cid": 2000002,
+      "name": "Some ATIS",
+      "callsign": "KATL_ATIS",
+      "frequency": "119.650",
+      "facility": 0,
+      "rating": 1,
+      "visual_range": 50,
+      "text_atis": ["INFO ALPHA"],
+      "logon_time": "2026-09-25T11:00:00.0000000Z",
+      "last_updated": "2026-09-25T14:00:00.0000000Z"
+    }
+  ],
+  "prefiles": [],
+  "servers": []
+}

@@ -1,0 +1,27 @@
+[project]
+name = "pcas"
+version = "0.1.0"
+description = "Predictive Collision Awareness System - learned conflict warning for non-towered airports"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "pandas>=2.2",
+    "pyarrow>=16.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pcas*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

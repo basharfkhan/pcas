@@ -1,0 +1,14 @@
+# VATSIM datafeed collector settings.
+#
+# data_dir intentionally sits OUTSIDE OneDrive: this grows by tens of MB per day and
+# syncing every flush would thrash the OneDrive client. Override with PCAS_DATA_DIR.
+collector:
+  data_dir: C:/Users/basha/pcas-data
+  poll_seconds: 15        # VATSIM's feed refresh rate; do not go lower
+  flush_minutes: 5
+  request_timeout: 20
+  bbox: null              # null = keep every pilot worldwide
+
+# Airports the controlled-vs-uncontrolled analysis will focus on. Not used by the
+# collector yet (it stores everything); recorded here so the choice is version-controlled.
+tracked_airports: []
