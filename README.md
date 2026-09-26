@@ -125,11 +125,51 @@ straight off the name and cannot leak a day across both sides.
 freezes for a stretch still gets through. A per-window check belongs with the baselines,
 where a stationary target would otherwise flatter every metric.
 
+## Baseline results
+
+Physics baselines on `7days1`, with the last 2 days held out chronologically (6,324 test
+windows, 10,015 aircraft). Errors in metres, best of K = 1 hypothesis.
+
+| model | minADE | minFDE (120 s) | horizontal | vertical | median FDE | p95 FDE |
+|---|---|---|---|---|---|---|
+| constant velocity | 1587 | 3621 | 3597 | 210 | 3289 | 8170 |
+| constant velocity (4 s fit) | 1609 | 3664 | 3622 | 277 | 3285 | 8172 |
+| constant turn rate | 1661 | 3754 | 3739 | 203 | 3624 | 7475 |
+| Kalman (constant velocity) | **1578** | **3607** | 3583 | 209 | 3284 | 8153 |
+
+Error grows steeply with horizon (Kalman, mean/median):
+
+| horizon | 10 s | 30 s | 60 s | 90 s | 120 s |
+|---|---|---|---|---|---|
+| mean | 97 | 423 | 1234 | 2331 | 3607 |
+| median | 48 | 194 | 706 | 1749 | 3284 |
+
+Three things this says:
+
+1. **The physics assumption dies somewhere past 30 s.** Under 20 s, dead reckoning is
+   decent, which is why closure-rate alerting works for its intended job. At 120 s it is
+   off by kilometres, and 120 s is where a pilot could still act on a warning.
+2. **Turning is where the error lives.** Aircraft turning at 1 deg/s or more during the
+   observed window have a median 120 s error of 5053 m, against 2124 m for aircraft that
+   look straight. Note even the "straight" ones are badly wrong: they turn *after* the
+   observation window, in the pattern. A model that has learned the pattern should.
+3. **Constant turn rate is not automatically better.** Extrapolating a turn for 120 s
+   overshoots when the aircraft rolls out, so it loses to plain constant velocity on
+   average while having the lowest p95. Both are beatable.
+
+Caveat on comparing to published numbers: these come from our own raw-data pipeline, which
+keeps any traffic within 15 km (including transiting aircraft above 120 kt), not from
+TrajAir's filtered `processed_data`. A like-for-like run on their processed data and
+official split is still to do, and belongs beside the leakage finding above.
+
 ## Roadmap
 
 - [x] Repo scaffold, CI, VATSIM collector
 - [x] ADS-B pipeline: runway-relative metres, scene building, day-based splits (no window leakage)
-- [ ] Baselines: constant velocity, constant turn rate, Kalman, LSTM, **TCAS-style closure-rate alerting**
+- [x] Metrics harness and physics baselines (constant velocity, constant turn rate, Kalman)
+- [ ] TCAS-style closure-rate alerting baseline, and conflict labelling
+- [ ] LSTM baseline
+- [ ] Like-for-like run on TrajAir's processed data and official split
 - [ ] Multi-agent Transformer with social attention
 - [ ] Multimodal predictions with calibrated uncertainty
 - [ ] Ablations, error analysis by flight phase, failure gallery

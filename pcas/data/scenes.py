@@ -64,6 +64,7 @@ def build_windows(
     pred_step: int = PRED_STEP,
     stride: int = 10,
     min_agents: int = 1,
+    min_motion_m: float = 50.0,
 ) -> list[Window]:
     """Slide a window over one scene and emit every usable multi-agent problem."""
     frames = scene.frames
@@ -114,6 +115,20 @@ def build_windows(
         future = np.array(
             [[positions[(f, a)] for f in future_frames] for a in agent_ids], dtype=np.float32
         )
+
+        # Drop aircraft that barely move across this window. The track-level filter in
+        # adsb.py cannot catch a transponder that freezes for part of an otherwise moving
+        # track, and a motionless target is trivially predictable: it would flatter every
+        # model and every baseline equally, which just adds noise to the comparison.
+        if min_motion_m > 0:
+            path = np.concatenate([obs, future], axis=1)
+            moved = np.linalg.norm(np.diff(path, axis=1), axis=2).sum(axis=1)
+            keep = moved >= min_motion_m
+            if not keep.any() or keep.sum() < min_agents:
+                continue
+            if not keep.all():
+                agent_ids = tuple(a for a, k in zip(agent_ids, keep, strict=True) if k)
+                obs, future = obs[keep], future[keep]
         wind = np.array(
             [
                 np.mean([wind_by_frame[f]["windx"] for f in obs_frames]),
