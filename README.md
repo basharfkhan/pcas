@@ -88,7 +88,7 @@ day and syncing every flush would thrash the sync client.
 
 Start it early: the controlled-vs-uncontrolled analysis needs weeks of accumulated history.
 
- reports what was actually captured, per hour of the day. This
+`pcas.collect.coverage` reports what was actually captured, per hour of the day. This
 matters more than it sounds: the collector runs on a desktop that sleeps, and VATSIM
 controller staffing peaks in the evening, so holes landing at the same hours every night
 would make the controlled-vs-uncontrolled comparison measure collector uptime rather than
