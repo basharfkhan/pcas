@@ -88,6 +88,13 @@ day and syncing every flush would thrash the sync client.
 
 Start it early: the controlled-vs-uncontrolled analysis needs weeks of accumulated history.
 
+ reports what was actually captured, per hour of the day. This
+matters more than it sounds: the collector runs on a desktop that sleeps, and VATSIM
+controller staffing peaks in the evening, so holes landing at the same hours every night
+would make the controlled-vs-uncontrolled comparison measure collector uptime rather than
+air traffic. Coverage is reported against full collection on every calendar day of the
+span, including days missed entirely, so the gaps are stated rather than hidden.
+
 ## The ADS-B pipeline
 
 Two tracks, deliberately kept separate.
@@ -127,78 +134,87 @@ where a stationary target would otherwise flatter every metric.
 
 ## Baseline results
 
-Physics baselines on `7days1`, with the last 2 days held out chronologically (6,324 test
-windows, 10,015 aircraft). Errors in metres, best of K = 1 hypothesis.
+Physics baselines on the full **111-day** dataset, with the last **22 days held out
+chronologically** (32,760 test windows, 49,096 aircraft). Errors in metres, best of K = 1.
 
 | model | minADE | minFDE (120 s) | horizontal | vertical | median FDE | p95 FDE |
 |---|---|---|---|---|---|---|
-| constant velocity | 1587 | 3621 | 3597 | 210 | 3289 | 8170 |
-| constant velocity (4 s fit) | 1609 | 3664 | 3622 | 277 | 3285 | 8172 |
-| constant turn rate | 1661 | 3754 | 3739 | 203 | 3624 | 7475 |
-| Kalman (constant velocity) | **1578** | **3607** | 3583 | 209 | 3284 | 8153 |
+| constant velocity | 1480 | 3354 | 3328 | 214 | 2639 | 8242 |
+| constant velocity (4 s fit) | 1504 | 3398 | 3348 | 294 | 2661 | 8149 |
+| constant turn rate | 1606 | 3647 | 3631 | 208 | 3381 | 7570 |
+| Kalman (constant velocity) | **1470** | **3338** | 3313 | 213 | 2627 | 8204 |
 
 Error grows steeply with horizon (Kalman, mean/median):
 
 | horizon | 10 s | 30 s | 60 s | 90 s | 120 s |
 |---|---|---|---|---|---|
-| mean | 97 | 423 | 1234 | 2331 | 3607 |
-| median | 48 | 194 | 706 | 1749 | 3284 |
+| mean | 95 | 404 | 1158 | 2165 | 3338 |
+| median | 48 | 186 | 612 | 1417 | 2627 |
 
-Three things this says:
+Two observations:
 
-1. **The physics assumption dies somewhere past 30 s.** Under 20 s, dead reckoning is
-   decent, which is why closure-rate alerting works for its intended job. At 120 s it is
-   off by kilometres, and 120 s is where a pilot could still act on a warning.
-2. **Turning is where the error lives.** Aircraft turning at 1 deg/s or more during the
-   observed window have a median 120 s error of 5053 m, against 2124 m for aircraft that
-   look straight. Note even the "straight" ones are badly wrong: they turn *after* the
-   observation window, in the pattern. A model that has learned the pattern should.
-3. **Constant turn rate is not automatically better.** Extrapolating a turn for 120 s
+1. **The physics assumption decays fast.** Under 20 s, dead reckoning is good, which is
+   why closure-rate alerting works for its intended job. At 120 s it is off by kilometres,
+   and 120 s is where a pilot could still comfortably act on a warning.
+2. **Constant turn rate is not automatically better.** Extrapolating a turn for 120 s
    overshoots when the aircraft rolls out, so it loses to plain constant velocity on
-   average while having the lowest p95. Both are beatable.
+   average, while having the lowest p95. On the 7-day subset, aircraft turning at 1 deg/s
+   or more during the observed window had a median 120 s error of 5053 m against 2124 m
+   for aircraft that looked straight, and even the straight ones are wrong by kilometres,
+   because they turn *after* the observation window ends.
 
-Caveat on comparing to published numbers: these come from our own raw-data pipeline, which
-keeps any traffic within 15 km (including transiting aircraft above 120 kt), not from
-TrajAir's filtered `processed_data`. A like-for-like run on their processed data and
-official split is still to do, and belongs beside the leakage finding above.
+## Headline result: closure-rate logic is strong up close and blind past 30 s
 
-## Headline result so far: where closure-rate logic runs out
+Alerting comparison on the 111-day dataset, last 22 days held out, 11,647 test windows
+holding 2 or more aircraft, 528 conflicts. Conflict = 0.5 nm horizontal and 500 ft
+vertical broken at the same instant. Every method alerts at the last observed instant and
+is scored by identical code, checking separation every second.
 
-Alerting comparison on `7days1`, last 2 days held out, 2,563 test windows holding 2 or more
-aircraft. Conflict = 0.5 nm horizontal and 500 ft vertical broken at the same instant.
-Both methods alert at the last observed instant and are scored by identical code.
+| method | detection rate | false alarms/hour | median lead time |
+|---|---|---|---|
+| closure rate (tau 20 s) | 0.64 *(of events inside 20 s)* | **0.3** | 1 s |
+| closure rate (tau 40 s) | 0.55 *(inside 40 s)* | 1.6 | 1 s |
+| closure rate (tau 120 s) | 0.33 *(inside 120 s)* | 7.6 | 1 s |
+| constant velocity (120 s) | 0.35 | 10.1 | 1 s |
+| Kalman CV (40 s) | 0.62 *(inside 40 s)* | 2.8 | 1 s |
+| Kalman CV (120 s) | **0.36** | 10.2 | 2 s |
 
-| method | events | detected | detection rate | false alarms/hour | median lead time |
-|---|---|---|---|---|---|
-| closure rate (tau 20 s) | 23 | 14 | 0.61 | 0.3 | 1 s |
-| closure rate (tau 40 s) | 33 | 16 | 0.49 | 1.8 | 1 s |
-| closure rate (tau 120 s) | 77 | 26 | 0.34 | 7.3 | 9 s |
-| constant velocity (120 s) | 77 | 25 | 0.33 | 8.8 | 19 s |
-| Kalman CV (120 s) | 77 | **27** | 0.35 | 8.7 | **19 s** |
+Detection rates are only comparable within the same horizon, since a longer horizon admits
+more events. The fair comparison splits by how far ahead the conflict actually was:
 
-Split by how far ahead the conflict actually was:
+| actual lead time | events | closure rate (tau 40 s) | Kalman CV (120 s) |
+|---|---|---|---|
+| 0 to 30 s | 218 | 0.633 | **0.702** |
+| 30 to 60 s | 123 | 0.041 | **0.252** |
+| 60 to 90 s | 99 | 0.000 | 0.051 |
+| 90 to 120 s | 88 | 0.000 | 0.023 |
+| false alarms/hour | | **1.6** | 10.2 |
 
-| actual lead time | closure rate (tau 40 s) | Kalman CV (120 s) |
-|---|---|---|
-| 0 to 30 s | 16 of 29 (0.55) | 15 of 29 (0.52) |
-| 30 to 60 s | **0 of 12 (0.00)** | 4 of 12 (0.33) |
-| 60 to 90 s | **0 of 18 (0.00)** | 5 of 18 (0.28) |
-| 90 to 120 s | **0 of 18 (0.00)** | 3 of 18 (0.17) |
+What this actually says, stated more carefully than our first pass:
 
-That zero column is the point of the project. Closure-rate logic is not bad at its job: it
-catches the majority of conflicts inside 30 s, at a very low false alarm rate. It simply
-cannot see past its horizon, and its detections arrive with a median lead time of 1 s,
-meaning the aircraft are already converging as it fires. Extending tau to 120 s does not
-fix that: it just alerts on more pairs, and its lead time stays short.
+- **Closure-rate alerting is a strong baseline, not a strawman.** It catches 63% of
+  conflicts arriving inside 30 s at 1.6 false alarms per hour. Any claim that TCAS-style
+  logic "does not work" is wrong.
+- **Its blindness past its horizon is real and total.** 5 of 123 conflicts detected in the
+  30 to 60 s band, and 0 of 187 beyond 60 s. Raising tau to 120 s does not fix it: it just
+  alerts on more pairs, and the median lead time stays at 1 s, meaning its detections fire
+  when the aircraft are already converging.
+- **The opening is the 30 to 60 s band.** Straight-line prediction alone lifts detection
+  there from 0.04 to 0.25, and it also beats closure-rate logic up close (0.70 against
+  0.63). It pays about 6x the false alarm rate for it.
+- **Past 60 s, nothing works yet.** 5% and 2%. This is the honest target for the learned
+  model, and it is a harder target than we assumed when planning: the useful headroom is
+  narrower and the false alarm cost is steeper.
 
-Even a dumb straight-line predictor over 120 s finds some of what closure-rate logic
-misses, at a cost of roughly 9 false alarms per hour against 1.8. **The learned model's job
-is to hold that longer horizon while pushing the false alarm rate back down.** Headroom is
-large: the best method here detects 35% of conflicts overall.
+**So the model's job, precisely:** hold the 30 to 90 s band at a false alarm rate near
+closure-rate logic's 1.6 per hour, where naive physics needs 10 per hour to get a quarter
+of the way. A negative result here would still be worth reporting.
 
-Caveat, stated plainly: 77 events across 2 days is a thin sample, so these numbers are
-provisional and the buckets are small. The full 111-day dataset is the fix, and it is the
-next thing to pull.
+A note on how this number moved: an earlier version of this comparison used 7 days and
+reported 28% and 17% detection in the 60 to 90 s and 90 to 120 s bands. With 528 events
+instead of 77, those fall to 5% and 2%. The earlier figures were small-sample noise. A
+second pass also found that scoring predictions only at their 10 s waypoints let them step
+over brief violations, which understated them near-term; alerting now checks every second.
 
 ## Roadmap
 
@@ -207,6 +223,7 @@ next thing to pull.
 - [x] Metrics harness and physics baselines (constant velocity, constant turn rate, Kalman)
 - [x] TCAS-style closure-rate alerting baseline, and conflict labelling
 - [ ] LSTM baseline
+- [x] Full 111-day dataset (32,760 test windows over 22 held-out days)
 - [ ] Like-for-like run on TrajAir's processed data and official split
 - [ ] Multi-agent Transformer with social attention
 - [ ] Multimodal predictions with calibrated uncertainty
