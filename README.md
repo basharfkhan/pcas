@@ -163,58 +163,72 @@ Two observations:
    for aircraft that looked straight, and even the straight ones are wrong by kilometres,
    because they turn *after* the observation window ends.
 
-## Headline result: closure-rate logic is strong up close and blind past 30 s
+## Headline result: the learned model's advantage is the 30 to 90 s band
 
-Alerting comparison on the 111-day dataset, last 22 days held out, 11,647 test windows
-holding 2 or more aircraft, 528 conflicts. Conflict = 0.5 nm horizontal and 500 ft
-vertical broken at the same instant. Every method alerts at the last observed instant and
-is scored by identical code, checking separation every second.
+Alerting comparison on the 111-day dataset, last 22 days held out, 11,481 test windows
+holding 2 or more aircraft, 528 conflicts. Conflict = 0.5 nm horizontal and 500 ft vertical
+broken at the same instant. Every method alerts at the last observed instant, is scored by
+identical code, and is checked every second.
 
-| method | detection rate | false alarms/hour | median lead time |
-|---|---|---|---|
-| closure rate (tau 20 s) | 0.64 *(of events inside 20 s)* | **0.3** | 1 s |
-| closure rate (tau 40 s) | 0.55 *(inside 40 s)* | 1.6 | 1 s |
-| closure rate (tau 120 s) | 0.33 *(inside 120 s)* | 7.6 | 1 s |
-| constant velocity (120 s) | 0.35 | 10.1 | 1 s |
-| Kalman CV (40 s) | 0.62 *(inside 40 s)* | 2.8 | 1 s |
-| Kalman CV (120 s) | **0.36** | 10.2 | 2 s |
+**Detection rates are only meaningful at a matched false alarm rate.** Any method detects
+more by alerting more, so each one is swept over its own sensitivity knob (`artifacts/
+tradeoff.csv`, produced by `scripts/alert_tradeoff.py`): closure-rate alerting sweeps tau,
+and the predictors sweep how far ahead they may raise an alert.
 
-Detection rates are only comparable within the same horizon, since a longer horizon admits
-more events. The fair comparison splits by how far ahead the conflict actually was:
+Read across at comparable false alarm budgets:
 
-| actual lead time | events | closure rate (tau 40 s) | Kalman CV (120 s) |
-|---|---|---|---|
-| 0 to 30 s | 218 | 0.633 | **0.702** |
-| 30 to 60 s | 123 | 0.041 | **0.252** |
-| 60 to 90 s | 99 | 0.000 | 0.051 |
-| 90 to 120 s | 88 | 0.000 | 0.023 |
-| false alarms/hour | | **1.6** | 10.2 |
+| false alarms/hour | method | 0 to 30 s | 30 to 60 s | 60 to 90 s | 90 to 120 s |
+|---|---|---|---|---|---|
+| ~1.6 | closure rate (tau 40) | **0.633** | 0.100 | | |
+| ~1.6 | LSTM (horizon 30 s) | 0.596 | | | |
+| ~1.8 | Kalman (horizon 30 s) | **0.693** | | | |
+| ~2.8 | closure rate (tau 60) | 0.651 | 0.122 | | |
+| ~2.8 | Kalman (horizon 40 s) | **0.702** | 0.200 | | |
+| ~3.0 | LSTM (horizon 40 s) | 0.615 | **0.375** | | |
+| ~5.4 | closure rate (tau 90) | 0.656 | 0.203 | 0.040 | |
+| ~5.9 | LSTM (horizon 60 s) | 0.619 | **0.333** | | |
+| ~7.6 | closure rate (tau 120) | 0.656 | 0.203 | 0.051 | 0.000 |
+| ~11.6 | LSTM (horizon 90 s) | 0.619 | **0.390** | **0.121** | |
+| ~16.0 | LSTM (horizon 120 s) | 0.628 | **0.398** | **0.182** | **0.080** |
 
-What this actually says, stated more carefully than our first pass:
+What this says:
 
-- **Closure-rate alerting is a strong baseline, not a strawman.** It catches 63% of
-  conflicts arriving inside 30 s at 1.6 false alarms per hour. Any claim that TCAS-style
-  logic "does not work" is wrong.
-- **Its blindness past its horizon is real and total.** 5 of 123 conflicts detected in the
-  30 to 60 s band, and 0 of 187 beyond 60 s. Raising tau to 120 s does not fix it: it just
-  alerts on more pairs, and the median lead time stays at 1 s, meaning its detections fire
-  when the aircraft are already converging.
-- **The opening is the 30 to 60 s band.** Straight-line prediction alone lifts detection
-  there from 0.04 to 0.25, and it also beats closure-rate logic up close (0.70 against
-  0.63). It pays about 6x the false alarm rate for it.
-- **Past 60 s, nothing works yet.** 5% and 2%. This is the honest target for the learned
-  model, and it is a harder target than we assumed when planning: the useful headroom is
-  narrower and the false alarm cost is steeper.
+1. **Close in, physics wins.** In the 0 to 30 s band the Kalman filter is best (0.702) and
+   closure-rate alerting is close behind (0.633 to 0.656). The LSTM is slightly *worse*
+   (0.60 to 0.65), which makes sense: it is trained to minimise average trajectory error,
+   dominated by ordinary cruise, and it smooths. Nothing here needs a neural network.
+2. **The learned model's advantage is the 30 to 90 s band.** At ~3 false alarms per hour it
+   detects 0.375 of conflicts arriving 30 to 60 s out, against 0.122 for closure-rate
+   alerting at a *lower* rate (2.8) and 0.200 for Kalman at the same rate. In the 60 to
+   90 s band it reaches 0.121 to 0.182 where closure-rate alerting manages 0.04 to 0.051.
+   It is the only method with any detection at all beyond 90 s (0.080).
+3. **Lead time follows.** Median lead time rises from 1 s for every physics setting to
+   4 to 15 s for the LSTM's longer horizons. The physics methods' detections fire when the
+   aircraft are already converging.
+4. **Capacity is not the lever.** 223k parameters reach a validation FDE of 2485 m; 3.13M
+   parameters, 14 times as many, reach 2465 m. The bottleneck is what the model can see,
+   which is one aircraft's own 11 seconds. The aircraft it might conflict with is not an
+   input. That is the argument for the multi-agent Transformer, and it means the attention
+   ablation will measure something real rather than confirm a prior.
 
-**So the model's job, precisely:** hold the 30 to 90 s band at a false alarm rate near
-closure-rate logic's 1.6 per hour, where naive physics needs 10 per hour to get a quarter
-of the way. A negative result here would still be worth reporting.
+### Two corrections this section has been through
 
-A note on how this number moved: an earlier version of this comparison used 7 days and
-reported 28% and 17% detection in the 60 to 90 s and 90 to 120 s bands. With 528 events
-instead of 77, those fall to 5% and 2%. The earlier figures were small-sample noise. A
-second pass also found that scoring predictions only at their 10 s waypoints let them step
-over brief violations, which understated them near-term; alerting now checks every second.
+Both are recorded because the method matters more than the number.
+
+**The sample was too small.** An earlier version used 7 days and reported 28% and 17%
+detection in the 60 to 90 s and 90 to 120 s bands. With 528 conflicts instead of 77 those
+fell to 5% and 2% for the physics baselines. Small-sample conflict statistics are not worth
+quoting.
+
+**The sensitivity knob was wrong, and it produced a false negative.** The first sweep
+quietened the predictors by demanding the predicted separation break the threshold by a
+tighter margin. That looked reasonable and was not: a trajectory off by kilometres at 90 s
+cannot be asked to predict a near miss, so tightening destroyed recall instead of trimming
+false alarms. Under that knob, at ~1.6 false alarms per hour, the LSTM scored 0.128 in the
+0 to 30 s band against closure-rate alerting's 0.633, and the conclusion written down was
+that the learned model does not beat closure-rate logic anywhere. Sweeping the *horizon*
+instead, the direct analogue of tau, reverses that in the 30 to 90 s band. Both knobs are
+kept in `tradeoff.csv` so the difference is visible.
 
 ## Roadmap
 
@@ -222,10 +236,10 @@ over brief violations, which understated them near-term; alerting now checks eve
 - [x] ADS-B pipeline: runway-relative metres, scene building, day-based splits (no window leakage)
 - [x] Metrics harness and physics baselines (constant velocity, constant turn rate, Kalman)
 - [x] TCAS-style closure-rate alerting baseline, and conflict labelling
-- [ ] LSTM baseline
+- [x] LSTM baseline (single aircraft, no attention)
 - [x] Full 111-day dataset (32,760 test windows over 22 held-out days)
 - [ ] Like-for-like run on TrajAir's processed data and official split
-- [ ] Multi-agent Transformer with social attention
+- [ ] Multi-agent Transformer with social attention (the capacity result says this, not more capacity, is the lever)
 - [ ] Multimodal predictions with calibrated uncertainty
 - [ ] Ablations, error analysis by flight phase, failure gallery
 - [ ] Controlled vs. uncontrolled analysis on VATSIM
