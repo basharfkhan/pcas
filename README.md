@@ -162,12 +162,50 @@ keeps any traffic within 15 km (including transiting aircraft above 120 kt), not
 TrajAir's filtered `processed_data`. A like-for-like run on their processed data and
 official split is still to do, and belongs beside the leakage finding above.
 
+## Headline result so far: where closure-rate logic runs out
+
+Alerting comparison on `7days1`, last 2 days held out, 2,563 test windows holding 2 or more
+aircraft. Conflict = 0.5 nm horizontal and 500 ft vertical broken at the same instant.
+Both methods alert at the last observed instant and are scored by identical code.
+
+| method | events | detected | detection rate | false alarms/hour | median lead time |
+|---|---|---|---|---|---|
+| closure rate (tau 20 s) | 23 | 14 | 0.61 | 0.3 | 1 s |
+| closure rate (tau 40 s) | 33 | 16 | 0.49 | 1.8 | 1 s |
+| closure rate (tau 120 s) | 77 | 26 | 0.34 | 7.3 | 9 s |
+| constant velocity (120 s) | 77 | 25 | 0.33 | 8.8 | 19 s |
+| Kalman CV (120 s) | 77 | **27** | 0.35 | 8.7 | **19 s** |
+
+Split by how far ahead the conflict actually was:
+
+| actual lead time | closure rate (tau 40 s) | Kalman CV (120 s) |
+|---|---|---|
+| 0 to 30 s | 16 of 29 (0.55) | 15 of 29 (0.52) |
+| 30 to 60 s | **0 of 12 (0.00)** | 4 of 12 (0.33) |
+| 60 to 90 s | **0 of 18 (0.00)** | 5 of 18 (0.28) |
+| 90 to 120 s | **0 of 18 (0.00)** | 3 of 18 (0.17) |
+
+That zero column is the point of the project. Closure-rate logic is not bad at its job: it
+catches the majority of conflicts inside 30 s, at a very low false alarm rate. It simply
+cannot see past its horizon, and its detections arrive with a median lead time of 1 s,
+meaning the aircraft are already converging as it fires. Extending tau to 120 s does not
+fix that: it just alerts on more pairs, and its lead time stays short.
+
+Even a dumb straight-line predictor over 120 s finds some of what closure-rate logic
+misses, at a cost of roughly 9 false alarms per hour against 1.8. **The learned model's job
+is to hold that longer horizon while pushing the false alarm rate back down.** Headroom is
+large: the best method here detects 35% of conflicts overall.
+
+Caveat, stated plainly: 77 events across 2 days is a thin sample, so these numbers are
+provisional and the buckets are small. The full 111-day dataset is the fix, and it is the
+next thing to pull.
+
 ## Roadmap
 
 - [x] Repo scaffold, CI, VATSIM collector
 - [x] ADS-B pipeline: runway-relative metres, scene building, day-based splits (no window leakage)
 - [x] Metrics harness and physics baselines (constant velocity, constant turn rate, Kalman)
-- [ ] TCAS-style closure-rate alerting baseline, and conflict labelling
+- [x] TCAS-style closure-rate alerting baseline, and conflict labelling
 - [ ] LSTM baseline
 - [ ] Like-for-like run on TrajAir's processed data and official split
 - [ ] Multi-agent Transformer with social attention

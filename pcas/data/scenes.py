@@ -28,9 +28,13 @@ PRED_STEP = 10
 class Window:
     """One multi-agent prediction problem.
 
-    obs:     (n_agents, obs_len, 3)   positions in metres, x along runway
-    future:  (n_agents, n_waypoints, 3)
-    wind:    (2,)                     mean windx/windy over the observed span, m/s
+    obs:          (n_agents, obs_len, 3)      positions in metres, x along runway
+    future:       (n_agents, n_waypoints, 3)  the prediction target, at pred_step spacing
+    future_dense: (n_agents, pred_len, 3)     every second of the same span
+    wind:         (2,)                        mean windx/windy over the observed span, m/s
+
+    `future` is what models predict; `future_dense` is what conflicts are labelled on. A
+    10 s sampling can step straight over a close approach, so the label needs 1 Hz.
     """
 
     scene_id: str
@@ -40,6 +44,7 @@ class Window:
     obs: np.ndarray
     future: np.ndarray
     wind: np.ndarray
+    future_dense: np.ndarray | None = None
 
     @property
     def n_agents(self) -> int:
@@ -98,9 +103,11 @@ def build_windows(
         obs_frames = wanted[:obs_len]
         future_frames = [start + off for off in offsets]
 
-        # Rule 2: aircraft present for the whole window.
+        # Rule 2: aircraft present at EVERY second of the window, not merely at the
+        # sampled waypoints. Conflict labelling reads all of them, and an aircraft that
+        # vanishes mid-window has no separation to measure there.
         present: set[str] | None = None
-        for frame in (*obs_frames, *future_frames):
+        for frame in wanted:
             here = agents_by_frame.get(frame, set())
             present = set(here) if present is None else present & here
             if not present:
@@ -115,6 +122,11 @@ def build_windows(
         future = np.array(
             [[positions[(f, a)] for f in future_frames] for a in agent_ids], dtype=np.float32
         )
+        # Every second of the predicted span, for conflict labelling.
+        dense_frames = wanted[obs_len:]
+        future_dense = np.array(
+            [[positions[(f, a)] for f in dense_frames] for a in agent_ids], dtype=np.float32
+        )
 
         # Drop aircraft that barely move across this window. The track-level filter in
         # adsb.py cannot catch a transponder that freezes for part of an otherwise moving
@@ -128,7 +140,7 @@ def build_windows(
                 continue
             if not keep.all():
                 agent_ids = tuple(a for a, k in zip(agent_ids, keep, strict=True) if k)
-                obs, future = obs[keep], future[keep]
+                obs, future, future_dense = obs[keep], future[keep], future_dense[keep]
         wind = np.array(
             [
                 np.mean([wind_by_frame[f]["windx"] for f in obs_frames]),
@@ -145,6 +157,7 @@ def build_windows(
                 agent_ids=agent_ids,
                 obs=obs,
                 future=future,
+                future_dense=future_dense,
                 wind=wind,
             )
         )
