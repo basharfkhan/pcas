@@ -10,7 +10,6 @@ alert at the last observed instant, then check what the aircraft actually did.
 from __future__ import annotations
 
 import argparse
-import glob
 import logging
 import sys
 from pathlib import Path
@@ -20,6 +19,7 @@ import pandas as pd
 
 from pcas.data.adsb import day_to_scenes, read_raw_day
 from pcas.data.scenes import OBS_LEN, build_windows, future_offsets
+from pcas.data.subsets import chronological_days, raw_day_files
 from pcas.eval.conflicts import NMAC, PROXIMITY, AlertScorer, closure_rate_alerts, predicted_alerts
 from pcas.models.baselines import ConstantTurnRate, ConstantVelocity, KalmanConstantVelocity
 
@@ -29,15 +29,19 @@ TAUS = (20.0, 40.0, 60.0, 90.0, 120.0)
 
 
 def load_test_windows(subset: Path, test_days: int, stride: int) -> list:
+    """Build windows for the held-out days only; the rest is never read."""
+    files = raw_day_files(subset)
+    train, test = chronological_days(subset, test_days)
+    log.info("%d days total, holding out %d: %s to %s", len(files), len(test), test[0], test[-1])
+    log.info("train days span %s to %s (not read here)", train[0], train[-1])
+
     windows = []
-    for path in sorted(glob.glob(str(subset / "raw_data" / "*" / "*.csv"))):
-        day = read_raw_day(path)
+    for date in test:
+        day = read_raw_day(files[date])
         for scene in day_to_scenes(day, min_agents=2):
             windows += build_windows(scene, stride=stride, min_agents=2)
-    days = sorted({w.date for w in windows if w.date})
-    held_out = set(days[-test_days:])
-    log.info("days %s, holding out %s", days, sorted(held_out))
-    return [w for w in windows if w.date in held_out]
+        log.info("  %s: %d windows", date, len(windows))
+    return windows
 
 
 def main(argv: list[str] | None = None) -> int:
