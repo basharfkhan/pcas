@@ -110,9 +110,9 @@ def main(argv: list[str] | None = None) -> int:
 
     optimiser = torch.optim.Adam(module.parameters(), lr=args.lr)
     schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(optimiser, factor=0.5, patience=2)
-    # Huber over metres: ADS-B has outliers, and squared error would let a handful of bad
-    # tracks dominate the gradient.
-    loss_fn = nn.HuberLoss(delta=100.0)
+    # Huber, with delta set to 100 m expressed in the target's scaled units: ADS-B has
+    # outliers, and squared error would let a handful of bad tracks dominate the gradient.
+    loss_fn = nn.HuberLoss(delta=100.0 / config.target_scale)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -138,7 +138,8 @@ def main(argv: list[str] | None = None) -> int:
             for xb, yb in val_loader:
                 pred = module(xb.to(device)).cpu()
                 # Report metres, not loss units: mean final displacement error.
-                errors.append(torch.linalg.norm(pred[:, -1] - yb[:, -1], dim=-1))
+                delta = (pred[:, -1] - yb[:, -1]) * config.target_scale
+                errors.append(torch.linalg.norm(delta, dim=-1))
         val_fde = float(torch.cat(errors).mean())
         schedule.step(val_fde)
 

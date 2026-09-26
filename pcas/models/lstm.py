@@ -33,6 +33,11 @@ class LSTMConfig:
     # raw values run to thousands of metres, which saturates activations.
     position_scale: float = 1000.0
     velocity_scale: float = 50.0
+    # Targets are scaled too. Without this the head has to emit raw metres (thousands),
+    # which leaves almost every sample in the Huber loss's linear regime: gradients arrive
+    # with near-constant magnitude and the output layer barely moves. A 2-layer net limps
+    # through it; a 3-layer net collapses to predicting a constant.
+    target_scale: float = 1000.0
 
 
 def build_module(config: LSTMConfig):
@@ -78,7 +83,8 @@ def make_samples(windows, config: LSTMConfig) -> tuple[np.ndarray, np.ndarray]:
     """Flatten windows into per-aircraft training samples.
 
     Returns (inputs, targets): inputs are (N, obs_len, n_features) normalised model inputs,
-    targets are (N, n_waypoints, 3) offsets in the aircraft's own frame, in metres.
+    targets are (N, n_waypoints, 3) offsets in the aircraft's own frame, divided by
+    `config.target_scale`. Multiply by that scale to get metres back.
     """
     inputs, targets = [], []
 
@@ -87,7 +93,7 @@ def make_samples(windows, config: LSTMConfig) -> tuple[np.ndarray, np.ndarray]:
         wind = window.wind if config.use_wind else None
         feats = normalise(features(obs_local, wind), config)
         inputs.append(feats)
-        targets.append(future_local)
+        targets.append(future_local / config.target_scale)
 
     if not inputs:
         n_features = 6 + (2 if config.use_wind else 0)
@@ -124,7 +130,7 @@ class LSTMPredictor(Predictor):
         self.module.eval()
         with torch.no_grad():
             tensor = torch.from_numpy(feats).to(self.device)
-            local = self.module(tensor).cpu().numpy()
+            local = self.module(tensor).cpu().numpy() * self.config.target_scale
 
         world = to_world(local, frame)
         return self._resample(world, horizons_s)[:, None, :, :]

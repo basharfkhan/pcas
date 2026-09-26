@@ -52,11 +52,12 @@ def test_samples_are_flattened_per_aircraft():
 
 def test_targets_are_in_the_aircraft_own_frame():
     window = make_window(n_agents=1)
-    _, y = make_samples([window], LSTMConfig())
+    config = LSTMConfig()
+    _, y = make_samples([window], config)
     # Flying along +x at 40 m/s, so 120 s ahead is ~4800 m straight ahead and no lateral
     # offset, whatever the airport coordinates were.
-    assert y[0, -1, 0] == pytest.approx(4800.0, rel=0.01)
-    assert abs(y[0, -1, 1]) < 1.0
+    assert y[0, -1, 0] * config.target_scale == pytest.approx(4800.0, rel=0.01)
+    assert abs(y[0, -1, 1] * config.target_scale) < 1.0
 
 
 def test_no_wind_config_drops_those_features():
@@ -110,3 +111,27 @@ def test_untrained_model_predicts_near_the_current_position():
     pred = predictor.with_wind(window.wind).predict(window.obs, np.array([120.0]))
 
     assert np.linalg.norm(pred[0, 0, 0] - window.obs[0, -1]) < 2000.0
+
+
+def test_targets_are_scaled_for_the_loss():
+    config = LSTMConfig()
+    _, y = make_samples([make_window(n_agents=1)], config)
+    # 4800 m ahead becomes 4.8 in target units, which keeps the head's outputs O(1).
+    assert y[0, -1, 0] == pytest.approx(4.8, rel=0.01)
+
+
+def test_predictions_are_unscaled_back_to_metres():
+    config = LSTMConfig()
+    module = build_module(config)
+    window = make_window(n_agents=1)
+
+    # Force a known output: 1.0 in target units must come back as target_scale metres.
+    with torch.no_grad():
+        for p in module.head[-1].parameters():
+            p.zero_()
+        module.head[-1].bias.fill_(1.0)
+
+    predictor = LSTMPredictor(module=module, config=config)
+    pred = predictor.with_wind(window.wind).predict(window.obs, np.array([120.0]))
+    offset = pred[0, 0, 0] - window.obs[0, -1]
+    assert np.linalg.norm(offset) == pytest.approx(config.target_scale * np.sqrt(3), rel=0.01)
