@@ -134,15 +134,30 @@ where a stationary target would otherwise flatter every metric.
 
 ## Baseline results
 
-Physics baselines on the full **111-day** dataset, with the last **22 days held out
-chronologically** (32,760 test windows, 49,096 aircraft). Errors in metres, best of K = 1.
+Baselines on the full **111-day** dataset (109 usable days: two ship as zero-byte files),
+with the last **22 days held out chronologically** (32,760 test windows, 49,096 aircraft).
+Errors in metres, best of K = 1.
 
 | model | minADE | minFDE (120 s) | horizontal | vertical | median FDE | p95 FDE |
 |---|---|---|---|---|---|---|
 | constant velocity | 1480 | 3354 | 3328 | 214 | 2639 | 8242 |
 | constant velocity (4 s fit) | 1504 | 3398 | 3348 | 294 | 2661 | 8149 |
 | constant turn rate | 1606 | 3647 | 3631 | 208 | 3381 | 7570 |
-| Kalman (constant velocity) | **1470** | **3338** | 3313 | 213 | 2627 | 8204 |
+| Kalman (constant velocity) | 1470 | 3338 | 3313 | 213 | 2627 | 8204 |
+| **LSTM** (single aircraft, 3.1M params) | **1095** | **2491** | 2482 | **124** | 2033 | 6020 |
+
+The LSTM cuts trajectory error by about 25% against the best physics baseline, and 42%
+vertically. Note what that does and does not buy: see the alerting section below, where its
+advantage turns out to be confined to one band.
+
+Three measurements say this model is limited by its inputs rather than its size or its
+optimisation, all pointing the same way:
+
+- **Capacity:** 223k parameters reach a validation FDE of 2485 m; 3.13M reach 2465 m.
+- **Optimisation:** fixing the target scaling (below) cut the epochs needed by roughly an
+  order of magnitude but moved final test FDE only from 2503 m to 2491 m.
+- **What it can see:** one aircraft's own 11 seconds. The aircraft it might conflict with is
+  not an input at all.
 
 Error grows steeply with horizon (Kalman, mean/median):
 
@@ -205,11 +220,31 @@ What this says:
 3. **Lead time follows.** Median lead time rises from 1 s for every physics setting to
    4 to 15 s for the LSTM's longer horizons. The physics methods' detections fire when the
    aircraft are already converging.
-4. **Capacity is not the lever.** 223k parameters reach a validation FDE of 2485 m; 3.13M
-   parameters, 14 times as many, reach 2465 m. The bottleneck is what the model can see,
-   which is one aircraft's own 11 seconds. The aircraft it might conflict with is not an
-   input. That is the argument for the multi-agent Transformer, and it means the attention
-   ablation will measure something real rather than confirm a prior.
+4. **Better trajectories are not the same as better alerts.** The LSTM cuts trajectory
+   error by 25% (see above) and yet loses to physics in the 0 to 30 s band. Average error
+   is dominated by ordinary cruise; conflicts happen in turning traffic near the field.
+   Optimising the first does not automatically serve the second, which is why this project
+   reports alerting metrics rather than FDE alone.
+5. **Capacity is not the lever.** Three measurements agree that the model is limited by its
+   inputs: 14 times the parameters buys 0.8%, fixing the optimisation moved final error by
+   0.5%, and the aircraft it might conflict with is not an input at all. That is the
+   argument for the multi-agent Transformer, and it means the attention ablation will
+   measure something real rather than confirm a prior.
+
+### Training setup, and a bug worth naming
+
+Each aircraft's window is re-expressed in its own frame: translated so the last observed
+position is the origin, rotated so it is heading along +x. Without that the network relearns
+the same manoeuvre at every position and heading on the field. Targets are offsets from the
+last observed position, so "carry on as you are" sits near the origin of the output space.
+
+Inputs were normalised but **targets were not**, and that cost a training run. With a Huber
+delta of 100 m against targets of thousands of metres, almost every sample sat in the loss's
+linear regime, so gradients arrived with near-constant magnitude and the output layer barely
+moved. The 2-layer model limped through, which is why it was still improving when it hit its
+epoch cap; the 3-layer model collapsed to predicting a constant and scored worse than
+Kalman. Scaling the targets fixed it: five epochs on four days now beat what previously took
+27 epochs on 76.
 
 ### Two corrections this section has been through
 
