@@ -194,3 +194,19 @@ def test_find_scenes_reads_official_split_folders(tmp_path):
     assert [p.name for p in find_scenes(tmp_path, "test")] == ["2020-09-19_b.txt"]
     # README.txt must not be mistaken for a scene.
     assert len(find_scenes(tmp_path)) == 2
+
+
+def test_zero_byte_days_are_skipped(tmp_path):
+    # TrajAir's 111-day subset ships two empty CSVs; they must not appear as usable days.
+    from pcas.data.subsets import raw_day_files
+
+    good = tmp_path / "raw_data" / "09-18-20_adsb"
+    good.mkdir(parents=True)
+    (good / "1.csv").write_text("ID,Time\n1,00:00:00.000\n", encoding="utf-8")
+
+    empty = tmp_path / "raw_data" / "12-01-20_adsb"
+    empty.mkdir(parents=True)
+    (empty / "1.csv").write_text("", encoding="utf-8")
+
+    days = raw_day_files(tmp_path)
+    assert list(days) == ["2020-09-18"]

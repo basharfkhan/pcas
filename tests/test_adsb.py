@@ -217,3 +217,10 @@ def test_frozen_position_tracks_are_dropped(tmp_path):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     assert read_raw_day(path).tracks.empty
+
+
+def test_empty_raw_file_gives_a_clear_error(tmp_path):
+    empty = tmp_path / "1.csv"
+    empty.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="file is empty"):
+        read_raw_day(empty)

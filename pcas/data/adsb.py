@@ -96,11 +96,16 @@ def read_raw_day(
 ) -> RawDay:
     """Read one raw day CSV into cleaned, 1 Hz, runway-frame tracks."""
     path = Path(path)
-    raw = pd.read_csv(
-        path,
-        low_memory=False,
-        usecols=["ID", "Time", "Date", "Altitude", "Lat", "Lon", "Metar"],
-    )
+    try:
+        raw = pd.read_csv(
+            path,
+            low_memory=False,
+            usecols=["ID", "Time", "Date", "Altitude", "Lat", "Lon", "Metar"],
+        )
+    except pd.errors.EmptyDataError as exc:
+        # The dataset ships a few zero-byte days; say so plainly rather than surfacing a
+        # parser error from deep inside pandas.
+        raise ValueError(f"{path}: file is empty") from exc
     raw = raw.dropna(subset=["Lat", "Lon", "Altitude", "Time", "Date"])
 
     ts = pd.to_datetime(

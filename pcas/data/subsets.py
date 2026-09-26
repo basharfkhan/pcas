@@ -14,7 +14,13 @@ _FOLDER_DATE = re.compile(r"^(?P<m>\d{2})-(?P<d>\d{2})-(?P<y>\d{2})")
 
 
 def raw_day_files(subset: str | Path) -> dict[str, Path]:
-    """ISO date -> raw CSV path, for every day in the subset."""
+    """ISO date -> raw CSV path, for every USABLE day in the subset.
+
+    TrajAir's 111-day subset ships two zero-byte CSVs (2020-12-01 and 2020-12-02): the
+    dataset counts 111 days "discounting downtime, repairs and bad weather days", but the
+    empty folders are still there. Days with no data are skipped, so every consumer sees a
+    truthful day count instead of crashing partway through a training run.
+    """
     root = Path(subset) / "raw_data"
     days: dict[str, Path] = {}
 
@@ -24,7 +30,7 @@ def raw_day_files(subset: str | Path) -> dict[str, Path]:
         match = _FOLDER_DATE.match(folder.name)
         if not match:
             continue
-        csvs = sorted(folder.glob("*.csv"))
+        csvs = [p for p in sorted(folder.glob("*.csv")) if p.stat().st_size > 0]
         if not csvs:
             continue
         days[f"20{match['y']}-{match['m']}-{match['d']}"] = csvs[0]
