@@ -7,9 +7,17 @@ can detect more by alerting more. Each method is therefore swept over its own se
 knob so the curves can be read at a common false alarm rate.
 
 - closure rate: sweep tau, its alerting horizon.
-- prediction based: sweep how tightly the predicted separation must break the threshold.
-  Truth always uses the full criterion; only the alerting test tightens, so a method can
-  be made quiet without redefining what counts as a conflict.
+- prediction based, two knobs, because the choice of knob turns out to matter more than
+  the method:
+  1. `scale`: how tightly the predicted separation must break the threshold. This is a
+     poor knob. A trajectory that is off by kilometres at 90 s cannot be asked to predict
+     a very close approach, so tightening destroys recall rather than trimming false
+     alarms.
+  2. `horizon`: how far ahead an alert may be raised. This is the direct analogue of tau,
+     and keeps each method inside the regime where it is accurate.
+
+Truth always uses the full criterion; only the alerting test changes, so a method can be
+quietened without redefining what counts as a conflict.
 """
 
 from __future__ import annotations
@@ -38,6 +46,7 @@ log = logging.getLogger("pcas.tradeoff")
 
 TAUS = (10.0, 20.0, 30.0, 40.0, 60.0, 90.0, 120.0)
 SCALES = (0.15, 0.25, 0.35, 0.5, 0.7, 1.0)
+PRED_HORIZONS = (10.0, 20.0, 30.0, 40.0, 60.0, 90.0, 120.0)
 BUCKETS = (0, 30, 60, 90, 120)
 
 
@@ -78,8 +87,11 @@ def main(argv: list[str] | None = None) -> int:
     for tau in TAUS:
         scorers[("closure_rate", tau)] = AlertScorer(truth_criterion, args.stride)
     for scale in SCALES:
-        scorers[("kalman_cv", scale)] = AlertScorer(truth_criterion, args.stride)
-        scorers[("lstm", scale)] = AlertScorer(truth_criterion, args.stride)
+        scorers[("kalman_cv_scale", scale)] = AlertScorer(truth_criterion, args.stride)
+        scorers[("lstm_scale", scale)] = AlertScorer(truth_criterion, args.stride)
+    for limit in PRED_HORIZONS:
+        scorers[("kalman_cv_horizon", limit)] = AlertScorer(truth_criterion, args.stride)
+        scorers[("lstm_horizon", limit)] = AlertScorer(truth_criterion, args.stride)
 
     for date in test_dates:
         day = read_raw_day(files[date])
@@ -98,11 +110,20 @@ def main(argv: list[str] | None = None) -> int:
                 )
             for scale in SCALES:
                 test = tighten(truth_criterion, scale)
-                scorers[("kalman_cv", scale)].update(
+                scorers[("kalman_cv_scale", scale)].update(
                     w, predicted_alerts(kal, dense, test), horizon_s=120.0
                 )
-                scorers[("lstm", scale)].update(
+                scorers[("lstm_scale", scale)].update(
                     w, predicted_alerts(net, dense, test), horizon_s=120.0
+                )
+
+            for limit in PRED_HORIZONS:
+                keep = dense <= limit
+                scorers[("kalman_cv_horizon", limit)].update(
+                    w, predicted_alerts(kal[:, :, keep], dense[keep], truth_criterion), limit
+                )
+                scorers[("lstm_horizon", limit)].update(
+                    w, predicted_alerts(net[:, :, keep], dense[keep], truth_criterion), limit
                 )
         log.info("%s: %d windows", date, len(windows))
 
