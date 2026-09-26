@@ -63,7 +63,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"test windows with 2+ aircraft: {len(multi)}")
 
+    # Waypoint horizons the models are trained to output (10 s spacing).
     horizons = np.array(future_offsets()) - (OBS_LEN - 1)
+    # Alerting checks EVERY second instead. Closure-rate alerting solves for the closest
+    # approach analytically, so scoring predictions only at 10 s waypoints would let them
+    # step over a brief violation and lose on a technicality rather than on substance.
+    dense_horizons = np.arange(1.0, horizons.max() + 1.0)
     rows = []
 
     for tau in TAUS:
@@ -75,11 +80,11 @@ def main(argv: list[str] | None = None) -> int:
     predictors = (ConstantVelocity(), ConstantTurnRate(), KalmanConstantVelocity())
     for model in predictors:
         for horizon in (40.0, 120.0):
-            mask = horizons <= horizon
+            mask = dense_horizons <= horizon
             scorer = AlertScorer(criterion, window_stride_s=args.stride)
             for w in multi:
-                pred = model.predict(w.obs, horizons[mask])
-                alerts = predicted_alerts(pred, horizons[mask], criterion)
+                pred = model.predict(w.obs, dense_horizons[mask])
+                alerts = predicted_alerts(pred, dense_horizons[mask], criterion)
                 scorer.update(w, alerts, horizon_s=horizon)
             rows.append({"method": f"{model.name} (<={horizon:.0f}s)", **scorer.summary()})
 
@@ -101,7 +106,9 @@ def main(argv: list[str] | None = None) -> int:
         (
             "kalman_cv(120s)",
             lambda w: predicted_alerts(
-                KalmanConstantVelocity().predict(w.obs, horizons), horizons, criterion
+                KalmanConstantVelocity().predict(w.obs, dense_horizons),
+                dense_horizons,
+                criterion,
             ),
         ),
     ):
