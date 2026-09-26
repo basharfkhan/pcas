@@ -45,6 +45,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--no-wind", action="store_true")
+    parser.add_argument("--hidden-size", type=int, default=128)
+    parser.add_argument("--num-layers", type=int, default=2)
+    parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--out", default="artifacts/lstm")
     args = parser.parse_args(argv)
 
@@ -71,7 +74,12 @@ def main(argv: list[str] | None = None) -> int:
         len(test_dates),
     )
 
-    config = LSTMConfig(use_wind=not args.no_wind)
+    config = LSTMConfig(
+        use_wind=not args.no_wind,
+        hidden_size=args.hidden_size,
+        num_layers=args.num_layers,
+        dropout=args.dropout,
+    )
 
     log.info("building training windows...")
     train_windows = windows_for(subset, train_dates, args.stride, 1)
