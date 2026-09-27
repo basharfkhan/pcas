@@ -253,3 +253,25 @@ def test_zero_altitude_reports_do_not_sink_the_field_estimate(tmp_path):
     # ...and the zero-altitude rows are dropped rather than kept as sea-level traffic.
     assert day.field_elev_m > 300
     assert (day.tracks["z_m"] > 300).all()
+
+
+def test_field_elevation_estimate_rejects_cruise_altitudes(tmp_path):
+    # A quiet session where the only traffic near the field is an airliner in cruise. The
+    # naive low percentile would put "ground" at 35,000 ft and filter out everything.
+    path = tmp_path / "1.csv"
+    lines = [HEADER]
+    for step in range(400):
+        t = 36000 + step
+        stamp = f"{t // 3600:02d}:{(t % 3600) // 60:02d}:{t % 60:02d}.000"
+        lat = KBTP.lat_deg + 0.0002 * step
+        lon = KBTP.lon_deg + 0.0002 * step
+        lines.append(
+            f"2002,{stamp},09/18/2020,35000,,,{lat:.6f},{lon:.6f},1.0,1.0,0.0,NJET,{CALM_METAR}"
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    day = read_raw_day(path)
+    # Falls back to the airport's published elevation rather than cruise level...
+    assert day.field_elev_m < 1000
+    # ...so the airliner is still tracked instead of being filtered away as "ground".
+    assert not day.tracks.empty

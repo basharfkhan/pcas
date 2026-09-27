@@ -22,6 +22,7 @@ Raw columns: ID, Time (UTC), Date, Altitude (ft), Speed, Heading, Lat, Lon, Age,
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -32,6 +33,8 @@ import pandas as pd
 
 from pcas.data.geo import FEET_TO_METERS, KBTP, LocalFrame
 from pcas.data.trajair import Scene
+
+log = logging.getLogger(__name__)
 
 # METAR wind group: 27012KT, 27012G20KT, VRB03KT, 00000KT.
 _METAR_WIND = re.compile(r"\b(\d{3}|VRB)(\d{2,3})(?:G\d{2,3})?KT\b")
@@ -178,10 +181,7 @@ def build_raw_day(
     if field_elev_m is not None:
         field_elev = field_elev_m
     else:
-        near = (np.hypot(x, y) < 1000.0) & reported
-        field_elev = (
-            float(np.percentile(alt_m[near], 2)) if near.any() else float(alt_m[reported].min())
-        )
+        field_elev = _estimate_field_elevation(alt_m.to_numpy(), x, y, reported, frame)
 
     points = pd.DataFrame(
         {
@@ -204,6 +204,39 @@ def build_raw_day(
         field_elev_m=field_elev,
         median_gap_s=_median_report_gap(points),
     )
+
+
+def _estimate_field_elevation(
+    alt_m: np.ndarray, x: np.ndarray, y: np.ndarray, reported: np.ndarray, frame: LocalFrame
+) -> float:
+    """Ground level, estimated from the data but sanity-checked against the airport.
+
+    A low percentile of altitude near the field usually works, but on a quiet session the
+    only traffic overhead may be airliners in cruise: one such day estimated 10,666 m
+    (35,000 ft), which filtered out every aircraft. So the near-field estimate is taken
+    over a wider radius, capped by a low percentile over all traffic, and finally rejected
+    outright if it lands implausibly far above the published field elevation.
+    """
+    if not reported.any():
+        return float("nan")
+
+    plausible_ceiling = frame.alt_m + 500.0
+    near = (np.hypot(x, y) < 3000.0) & reported
+
+    candidates = [float(np.percentile(alt_m[reported], 1))]
+    if near.any():
+        candidates.append(float(np.percentile(alt_m[near], 2)))
+    estimate = min(candidates)
+
+    if estimate > plausible_ceiling:
+        log.warning(
+            "field elevation estimate %.0f m is implausible (airport is %.0f m); "
+            "falling back to the published elevation",
+            estimate,
+            frame.alt_m,
+        )
+        return frame.alt_m
+    return estimate
 
 
 def _median_report_gap(points: pd.DataFrame) -> float:
