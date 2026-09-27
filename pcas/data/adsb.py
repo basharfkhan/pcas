@@ -53,12 +53,20 @@ MIN_PATH_M = 200.0
 
 @dataclass(frozen=True)
 class RawDay:
-    """One day of raw ADS-B, cleaned and resampled onto a 1 Hz grid."""
+    """One day of raw ADS-B, cleaned and resampled onto a 1 Hz grid.
+
+    `median_gap_s` is the median spacing between an aircraft's position reports before
+    resampling. It is a data-quality gate, not a curiosity: reception varies by session,
+    and a session sampled every 5 s cannot support 1 Hz tracks. Interpolating one anyway
+    would invent motion, and the gap rule instead shatters every track so the session
+    silently yields nothing. Callers should skip sessions above their tolerance.
+    """
 
     date: str
     tracks: pd.DataFrame  # ts, agent_id, track_id, x_m, y_m, z_m
     wind: pd.DataFrame  # ts, windx, windy (m/s, frame-aligned)
     field_elev_m: float
+    median_gap_s: float = float("nan")
 
 
 def parse_metar_wind(metar: str, runway_heading_deg: float) -> tuple[float, float]:
@@ -119,36 +127,95 @@ def read_raw_day(
         raise ValueError(f"{path}: no parsable rows")
 
     date = raw["ts"].dt.strftime("%Y-%m-%d").mode().iloc[0]
-    alt_m = raw["Altitude"].astype(float) * FEET_TO_METERS
+    wind = _wind_series(raw, frame.runway_heading_deg)
+
+    return build_raw_day(
+        ts=raw["ts"],
+        agent_id=raw["ID"],
+        lat=raw["Lat"],
+        lon=raw["Lon"],
+        altitude_ft=raw["Altitude"],
+        wind=wind,
+        date=date,
+        frame=frame,
+        max_range_m=max_range_m,
+        field_elev_m=field_elev_m,
+    )
+
+
+def build_raw_day(
+    ts: pd.Series,
+    agent_id: pd.Series,
+    lat: pd.Series,
+    lon: pd.Series,
+    altitude_ft: pd.Series,
+    wind: pd.DataFrame,
+    date: str,
+    frame: LocalFrame = KBTP,
+    max_range_m: float = MAX_RANGE_M,
+    field_elev_m: float | None = None,
+) -> RawDay:
+    """Clean, filter and resample position reports into a `RawDay`.
+
+    Shared by every ADS-B source: TrajAir and TartanAviation ship different CSV layouts
+    but the same underlying measurements, and the filtering decisions belong in one place
+    so results stay comparable across datasets.
+    """
+    alt_m = altitude_ft.astype(float) * FEET_TO_METERS
+    x, y, _ = frame.to_local(
+        lat.to_numpy(dtype=float), lon.to_numpy(dtype=float), np.zeros(len(lat))
+    )
+
+    # Some reports carry altitude 0, which is not an aircraft at sea level but a missing
+    # value. Left in, they drag the field-elevation percentile below the airport (to 0 m at
+    # KAGC, against a true 382 m) and switch the ground filter off entirely.
+    reported = (alt_m > 0).to_numpy()
 
     # The raw altitudes are not reliably MSL (values below KBTP's published field
     # elevation appear for aircraft in the pattern), so the ground level is estimated
     # from the data instead of assumed: the low percentile of altitude among samples
     # close to the airport.
-    x, y = _local_xy(raw, frame)
     if field_elev_m is not None:
         field_elev = field_elev_m
     else:
-        near = np.hypot(x, y) < 1000.0
-        field_elev = float(np.percentile(alt_m[near], 2)) if near.any() else float(alt_m.min())
+        near = (np.hypot(x, y) < 1000.0) & reported
+        field_elev = (
+            float(np.percentile(alt_m[near], 2)) if near.any() else float(alt_m[reported].min())
+        )
 
     points = pd.DataFrame(
         {
-            "ts": raw["ts"].to_numpy(),
-            "agent_id": raw["ID"].astype("string").to_numpy(),
+            "ts": ts.to_numpy(),
+            "agent_id": agent_id.astype("string").to_numpy(),
             "x_m": x,
             "y_m": y,
             "z_m": alt_m.to_numpy(),
         }
     )
+    points = points[reported]
     points = points[points["z_m"] > field_elev + GROUND_MARGIN_M]
     points = points[np.hypot(points["x_m"], points["y_m"]) <= max_range_m]
     points = points.sort_values(["agent_id", "ts"]).drop_duplicates(["agent_id", "ts"])
 
-    tracks = _resample_tracks(points)
-    wind = _wind_series(raw, frame.runway_heading_deg)
+    return RawDay(
+        date=date,
+        tracks=_resample_tracks(points),
+        wind=wind,
+        field_elev_m=field_elev,
+        median_gap_s=_median_report_gap(points),
+    )
 
-    return RawDay(date=date, tracks=tracks, wind=wind, field_elev_m=field_elev)
+
+def _median_report_gap(points: pd.DataFrame) -> float:
+    """Median seconds between consecutive position reports, pooled over aircraft."""
+    gaps = []
+    for _, group in points.groupby("agent_id", sort=False):
+        if len(group) < 5:
+            continue
+        gaps.append(np.diff(_epoch_seconds(group["ts"])))
+    if not gaps:
+        return float("nan")
+    return float(np.median(np.concatenate(gaps)))
 
 
 _EPOCH = pd.Timestamp("1970-01-01", tz="UTC")

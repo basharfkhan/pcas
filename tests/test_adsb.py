@@ -224,3 +224,32 @@ def test_empty_raw_file_gives_a_clear_error(tmp_path):
     empty.write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="file is empty"):
         read_raw_day(empty)
+
+
+def test_zero_altitude_reports_do_not_sink_the_field_estimate(tmp_path):
+    # Altitude 0 is a missing value, not sea level. Left in, it drags the field-elevation
+    # percentile to zero and the ground filter stops filtering.
+    path = tmp_path / "1.csv"
+    lines = [HEADER]
+    for step in range(400):
+        t = 36000 + step
+        stamp = f"{t // 3600:02d}:{(t % 3600) // 60:02d}:{t % 60:02d}.000"
+        lat = KBTP.lat_deg + 0.0001 * step
+        lon = KBTP.lon_deg + 0.0001 * step
+        # A tenth of the reports carry no altitude.
+        alt = 0 if step % 10 == 0 else 2000
+        lines.append(
+            f"1001,{stamp},09/18/2020,{alt},,,{lat:.6f},{lon:.6f},1.0,1.0,0.0,N1001,{CALM_METAR}"
+        )
+        lines.append(
+            f"9999,{stamp},09/18/2020,1100,,,{KBTP.lat_deg:.6f},{KBTP.lon_deg:.6f},"
+            f"1.0,0.0,0.0,NPARKED,{CALM_METAR}"
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    day = read_raw_day(path)
+    # The parked aircraft at 1100 ft still sets the field, so it is excluded...
+    assert "9999" not in set(day.tracks["agent_id"])
+    # ...and the zero-altitude rows are dropped rather than kept as sea-level traffic.
+    assert day.field_elev_m > 300
+    assert (day.tracks["z_m"] > 300).all()
