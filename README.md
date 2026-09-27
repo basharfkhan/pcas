@@ -9,6 +9,20 @@ collisions happen and where certified collision avoidance systems are least usef
 > rather than to the architecture: with neighbours hidden, the same model scores like an LSTM.
 > Physics still wins inside 30 seconds, and that is reported too.
 
+## What it looks like
+
+![Replay of real traffic with predicted futures and a conflict warning](docs/figures/replay.gif)
+
+Recorded ADS-B from a held-out session at KBTP, replayed with the model running. Each aircraft
+carries a trail of where it has been and a fan of six futures it might fly over the next two
+minutes, with the thickness and opacity of each showing how likely the model thinks it is. When
+two aircraft are predicted to lose separation the pair is joined by a dashed line and the
+banner states the calibrated probability and how soon.
+
+Nothing here is staged. The aircraft are recordings the model never trained on, and every
+prediction is made from the eleven seconds before that frame. Regenerate with
+`python scripts/make_replay.py`.
+
 ## In three pictures
 
 ![Detection against false alarms, by lead time](docs/figures/detection_vs_false_alarms.png)
