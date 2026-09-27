@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -113,6 +114,13 @@ def main(argv: list[str] | None = None) -> int:
 
     calibrator = fit_isotonic(val["stated"].to_numpy(), val["event"].to_numpy())
     calibrator.to_json(args.out)
+
+    # Keep the raw pairs so the reliability figure can be regenerated without a rerun.
+    pairs_path = Path(args.out).with_name("calibration_pairs.csv")
+    test.assign(calibrated=calibrator.predict(test["stated"].to_numpy())).to_csv(
+        pairs_path, index=False
+    )
+    log.info("wrote test pairs to %s", pairs_path)
 
     calibrated = calibrator.predict(test["stated"].to_numpy())
     outcome = test["event"].to_numpy()
