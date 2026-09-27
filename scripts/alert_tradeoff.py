@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     truth_criterion = PROXIMITY if args.criterion == "proximity" else NMAC
 
-    from pcas.models.lstm import load_predictor
+    from pcas.models.load import load_predictor
 
     lstm = load_predictor(args.checkpoint)
     kalman = KalmanConstantVelocity()

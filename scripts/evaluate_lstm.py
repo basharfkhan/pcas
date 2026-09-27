@@ -21,7 +21,7 @@ from pcas.data.sources import iter_days, open_source
 from pcas.eval.conflicts import NMAC, PROXIMITY, AlertScorer, closure_rate_alerts, predicted_alerts
 from pcas.eval.metrics import MetricAccumulator
 from pcas.models.baselines import KalmanConstantVelocity
-from pcas.models.lstm import load_predictor
+from pcas.models.load import load_predictor
 
 log = logging.getLogger("pcas.evaluate_lstm")
 

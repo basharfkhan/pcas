@@ -74,3 +74,42 @@ def test_features_add_velocity_and_wind():
     with_wind = features(obs_local, np.array([3.0, -1.0]))
     assert with_wind.shape == (1, 11, 8)
     assert with_wind[0, :, 6] == pytest.approx(3.0)
+
+
+def test_scene_frames_puts_every_agent_in_every_frame():
+    from pcas.models.framing import scene_frames
+
+    obs = np.concatenate([track(heading_deg=0.0), track(heading_deg=90.0)], axis=0)
+    local, frame = scene_frames(obs)
+
+    assert local.shape == (2, 2, 11, 3)
+    # Seen from its own frame, each aircraft ends at the origin heading along +x.
+    assert local[0, 0, -1] == pytest.approx([0.0, 0.0, 0.0])
+    assert local[1, 1, -1] == pytest.approx([0.0, 0.0, 0.0])
+    # The diagonal matches the single-agent framing exactly.
+    solo, _, _ = to_agent_frame(obs)
+    assert local[0, 0] == pytest.approx(solo[0], abs=1e-9)
+    assert local[1, 1] == pytest.approx(solo[1], abs=1e-9)
+
+
+def test_neighbour_position_is_relative_and_frame_dependent():
+    from pcas.models.framing import scene_frames
+
+    # Two aircraft 1000 m apart along x, both heading +x (north-east agnostic).
+    a = track(heading_deg=0.0, start=(0.0, 0.0, 300.0))
+    b = track(heading_deg=0.0, start=(1000.0, 0.0, 300.0))
+    local, _ = scene_frames(np.concatenate([a, b], axis=0))
+
+    # From A's frame, B is 1000 m ahead; from B's frame, A is 1000 m behind.
+    assert local[0, 1, -1, 0] == pytest.approx(1000.0, abs=1e-6)
+    assert local[1, 0, -1, 0] == pytest.approx(-1000.0, abs=1e-6)
+
+
+def test_scene_frames_round_trips_through_to_world():
+    from pcas.models.framing import scene_frames
+
+    obs = np.concatenate([track(heading_deg=20.0), track(heading_deg=200.0)], axis=0)
+    local, frame = scene_frames(obs)
+    # The diagonal, mapped back, must return the original observations.
+    diagonal = np.stack([local[i, i] for i in range(obs.shape[0])])
+    assert to_world(diagonal, frame) == pytest.approx(obs, abs=1e-6)

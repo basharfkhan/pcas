@@ -101,3 +101,29 @@ def features(obs_local: np.ndarray, wind: np.ndarray | None = None) -> np.ndarra
         parts.append(np.broadcast_to(wind, (*obs_local.shape[:2], wind.shape[-1])))
 
     return np.concatenate(parts, axis=-1)
+
+
+def scene_frames(obs: np.ndarray, fit_len: int = 4) -> tuple[np.ndarray, dict]:
+    """Express every aircraft's observations in every aircraft's own frame.
+
+    Social attention needs relative geometry: an aircraft cannot reason about the one it
+    might hit if each is described in its own private coordinates. So for each target `i`,
+    all agents are re-expressed in `i`'s frame, which keeps the per-agent invariance that
+    makes learning easy while making neighbours' positions meaningful.
+
+    Returns `(local, frame)` where `local[i, j]` is agent `j` seen from agent `i`'s frame,
+    shaped (A, A, T, 3), and `frame` inverts the transform for each target as usual.
+    """
+    obs = np.asarray(obs, dtype=float)
+    origin = obs[:, -1, :].copy()
+    heading = heading_from(obs, fit_len)
+
+    # (targets, agents, T, 3)
+    shifted = obs[None, :, :, :] - origin[:, None, None, :]
+    cos, sin = np.cos(-heading), np.sin(-heading)
+
+    x = shifted[..., 0] * cos[:, None, None] - shifted[..., 1] * sin[:, None, None]
+    y = shifted[..., 0] * sin[:, None, None] + shifted[..., 1] * cos[:, None, None]
+    local = np.stack([x, y, shifted[..., 2]], axis=-1)
+
+    return local, {"origin": origin, "heading": heading}
