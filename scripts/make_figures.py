@@ -131,6 +131,56 @@ def figure_detection(artifacts: Path, out: Path) -> None:
     log.info("wrote %s", out)
 
 
+def figure_headline(artifacts: Path, out: Path) -> None:
+    """One panel: the long-horizon band, for places too small to read four panels."""
+    plt = _style()
+    mm = pd.read_csv(artifacts / "tradeoff_mm.csv")
+    lstm = pd.read_csv(artifacts / "tradeoff_tartan.csv")
+    band = "det_(60, 90]"
+
+    series = [
+        ("closure rate", mm[mm.method == "closure_rate"]),
+        ("Kalman", mm[mm.method == "kalman_cv_horizon"]),
+        ("LSTM", lstm[lstm.method == "lstm_horizon"]),
+        ("Transformer", mm[mm.method == "transformer_probability"]),
+    ]
+
+    fig, ax = plt.subplots(figsize=(5.6, 4.4))
+    for name, frame in series:
+        data = frame[["false_alarms_per_hour", band]].dropna().sort_values("false_alarms_per_hour")
+        if data.empty:
+            continue
+        ax.plot(
+            data["false_alarms_per_hour"],
+            data[band],
+            color=COLORS[name],
+            linewidth=2.2,
+            marker="o",
+            markersize=5,
+            label=name,
+        )
+        last = data.iloc[-1]
+        ax.annotate(
+            name,
+            (last["false_alarms_per_hour"], last[band]),
+            textcoords="offset points",
+            xytext=(7, -3),
+            fontsize=8.5,
+            color=COLORS[name],
+        )
+
+    ax.set_xscale("log")
+    ax.set_xlim(3, 260)
+    ax.set_ylim(0, 0.9)
+    ax.set_xlabel("false alarms per hour")
+    ax.set_ylabel("conflicts detected")
+    ax.set_title("Conflicts spotted 60 to 90 seconds ahead", fontsize=11)
+    ax.grid(True, alpha=0.5, linewidth=0.6)
+    fig.tight_layout()
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    log.info("wrote %s", out)
+
+
 def figure_reliability(artifacts: Path, out: Path) -> None:
     """Stated conflict probability against observed frequency, before and after calibration."""
     plt = _style()
@@ -339,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     figure_detection(artifacts, out / "detection_vs_false_alarms.png")
+    figure_headline(artifacts, out / "detection_60_90s.png")
     figure_reliability(artifacts, out / "reliability.png")
     figure_horizon(artifacts, out / "error_vs_horizon.png")
     return 0
