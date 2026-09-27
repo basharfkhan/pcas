@@ -100,24 +100,42 @@ def airport_of(path: Path) -> str:
     raise ValueError(f"cannot tell which airport {path} belongs to")
 
 
-def read_csv_tolerantly(path: str | Path) -> pd.DataFrame:
-    """Read one session CSV, dropping lines the recorder left incomplete.
+EXPECTED_HEADER = "ID,Time,Date"
 
-    At least one full-day file ends mid-field because the recorder was killed, which makes
-    pandas raise "EOF inside string". Rather than lose the whole day, lines with unbalanced
-    quotes are dropped first. That is cheap and only ever discards a truncated tail.
+
+def read_csv_tolerantly(path: str | Path) -> pd.DataFrame | None:
+    """Read one session CSV, or return None when the file is not usable.
+
+    Two real defects in the distributed data, each of which used to abort a whole run:
+
+    - a full-day file ends mid-field because the recorder was killed, so pandas raises
+      "EOF inside string". Lines with unbalanced quotes are dropped, which only ever
+      discards a truncated tail.
+    - one file (kbtp 2020-09-01, 23.csv) is binary garbage rather than CSV at all.
+
+    A file that does not start with the expected header, or that pandas cannot parse, is
+    skipped with a warning. Losing one recording segment beats losing the session, and
+    losing a session beats killing a training run hours in.
     """
     path = Path(path)
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
+
+    if not lines or not lines[0].startswith(EXPECTED_HEADER):
+        head = lines[0][:40] if lines else ""
+        log.warning("%s: not a session CSV (header %r), skipping", path.name, head)
+        return None
 
     kept = [line for line in lines if line.count('"') % 2 == 0]
     dropped = len(lines) - len(kept)
     if dropped:
         log.debug("%s: dropped %d incomplete line(s)", path.name, dropped)
 
-    frame = pd.read_csv(io.StringIO("\n".join(kept)), low_memory=False)
-    return frame
+    try:
+        return pd.read_csv(io.StringIO("\n".join(kept)), low_memory=False)
+    except (pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        log.warning("%s: unparsable (%s), skipping", path.name, exc)
+        return None
 
 
 def parse_list_field(values: pd.Series, n_parts: int) -> pd.DataFrame:
@@ -184,7 +202,9 @@ def read_session(
     airport = airport or airport_of(paths[0])
     frame = AIRPORTS[airport]
 
-    frames = [read_csv_tolerantly(p) for p in paths]
+    frames = [f for f in (read_csv_tolerantly(p) for p in paths) if f is not None]
+    if not frames:
+        raise ValueError(f"{paths[0].parent}: no usable CSV files")
     raw = pd.concat(frames, ignore_index=True)
     raw = raw.dropna(subset=["Lat", "Lon", "Altitude", "Time", "Date"])
     if raw.empty:
