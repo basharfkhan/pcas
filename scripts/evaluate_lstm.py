@@ -15,9 +15,9 @@ import sys
 import numpy as np
 import pandas as pd
 
-from pcas.data.adsb import day_to_scenes, read_raw_day
+from pcas.data.adsb import day_to_scenes
 from pcas.data.scenes import OBS_LEN, build_windows, future_offsets
-from pcas.data.subsets import chronological_days, raw_day_files
+from pcas.data.sources import open_source
 from pcas.eval.conflicts import NMAC, PROXIMITY, AlertScorer, closure_rate_alerts, predicted_alerts
 from pcas.eval.metrics import MetricAccumulator
 from pcas.models.baselines import KalmanConstantVelocity
@@ -29,7 +29,9 @@ log = logging.getLogger("pcas.evaluate_lstm")
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", default="artifacts/lstm/lstm.pt")
-    parser.add_argument("--subset", default="data/trajair/111_days/111_days")
+    parser.add_argument("--source", choices=["trajair", "tartan"], default="tartan")
+    parser.add_argument("--root", default="data/tartan")
+    parser.add_argument("--airport", default="kbtp")
     parser.add_argument("--test-days", type=int, default=22)
     parser.add_argument("--stride", type=int, default=10)
     parser.add_argument("--criterion", choices=["proximity", "nmac"], default="proximity")
@@ -42,8 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     kalman = KalmanConstantVelocity()
     log.info("loaded %s on %s", args.checkpoint, lstm.device)
 
-    _, test_dates = chronological_days(args.subset, args.test_days)
-    files = raw_day_files(args.subset)
+    source = open_source(args.source, args.root, args.airport)
+    _, test_dates = source.split(args.test_days)
 
     horizons = np.array(future_offsets()) - (OBS_LEN - 1)
     dense = np.arange(1.0, horizons.max() + 1.0)
@@ -56,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     for date in test_dates:
-        day = read_raw_day(files[date])
+        day = source.read(date)
         windows = []
         for scene in day_to_scenes(day, min_agents=1):
             windows += build_windows(scene, stride=args.stride, min_agents=1)

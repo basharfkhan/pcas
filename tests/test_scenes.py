@@ -210,3 +210,15 @@ def test_zero_byte_days_are_skipped(tmp_path):
 
     days = raw_day_files(tmp_path)
     assert list(days) == ["2020-09-18"]
+
+
+def test_dense_future_can_be_skipped_to_save_memory(scene):
+    with_dense = build_windows(scene, stride=10)[0]
+    without = build_windows(scene, stride=10, include_dense=False)[0]
+
+    assert with_dense.future_dense is not None
+    assert with_dense.future_dense.shape == (2, 120, 3)
+    assert without.future_dense is None
+    # Everything a model trains on is unchanged.
+    assert without.obs.tolist() == with_dense.obs.tolist()
+    assert without.future.tolist() == with_dense.future.tolist()

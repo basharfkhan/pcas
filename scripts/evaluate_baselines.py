@@ -12,35 +12,35 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from pcas.data.adsb import day_to_scenes, read_raw_day
+from pcas.data.adsb import day_to_scenes
 from pcas.data.scenes import OBS_LEN, PRED_STEP, build_windows, future_offsets
-from pcas.data.subsets import chronological_days, raw_day_files
+from pcas.data.sources import open_source
 from pcas.eval.metrics import MetricAccumulator
 from pcas.models.baselines import DEFAULT_BASELINES
 
 log = logging.getLogger("pcas.evaluate")
 
 
-def load_windows(subset: Path, stride: int, min_agents: int, dates: list[str]) -> list:
-    """Build windows for the given dates only, so the full subset need not fit in RAM."""
-    files = raw_day_files(subset)
+def load_windows(source, dates: list[str], stride: int, min_agents: int) -> list:
+    """Build windows for the given dates only, so the dataset need not fit in RAM."""
     windows = []
     for date in dates:
-        day = read_raw_day(files[date])
+        day = source.read(date)
         for scene in day_to_scenes(day, min_agents=min_agents):
             windows += build_windows(scene, stride=stride, min_agents=min_agents)
-        log.info("%s: %d windows so far", day.date, len(windows))
+        log.info("%s: %d windows so far", date, len(windows))
     return windows
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--subset", default="data/trajair/7days1/7days1")
+    parser.add_argument("--source", choices=["trajair", "tartan"], default="tartan")
+    parser.add_argument("--root", default="data/tartan")
+    parser.add_argument("--airport", default="kbtp")
     parser.add_argument("--stride", type=int, default=10)
     parser.add_argument("--min-agents", type=int, default=1)
     parser.add_argument("--test-days", type=int, default=2, help="Held-out final days.")
@@ -48,10 +48,12 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    _, test_dates = chronological_days(args.subset, args.test_days)
-    test = load_windows(Path(args.subset), args.stride, args.min_agents, test_dates)
+    source = open_source(args.source, args.root, args.airport)
+    _, test_dates = source.split(args.test_days)
+    log.info("%s %s: %d days total", args.source, args.airport, len(source.days))
+    test = load_windows(source, test_dates, args.stride, args.min_agents)
     if not test:
-        log.error("no windows found under %s", args.subset)
+        log.error("no windows found in %s", args.root)
         return 1
 
     # Horizons are seconds past the LAST OBSERVED sample, not past the window start.

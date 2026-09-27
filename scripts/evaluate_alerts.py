@@ -12,14 +12,13 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from pcas.data.adsb import day_to_scenes, read_raw_day
+from pcas.data.adsb import day_to_scenes
 from pcas.data.scenes import OBS_LEN, build_windows, future_offsets
-from pcas.data.subsets import chronological_days, raw_day_files
+from pcas.data.sources import open_source
 from pcas.eval.conflicts import NMAC, PROXIMITY, AlertScorer, closure_rate_alerts, predicted_alerts
 from pcas.models.baselines import ConstantTurnRate, ConstantVelocity, KalmanConstantVelocity
 
@@ -28,16 +27,17 @@ log = logging.getLogger("pcas.alerts")
 TAUS = (20.0, 40.0, 60.0, 90.0, 120.0)
 
 
-def load_test_windows(subset: Path, test_days: int, stride: int) -> list:
+def load_test_windows(source, test_days: int, stride: int) -> list:
     """Build windows for the held-out days only; the rest is never read."""
-    files = raw_day_files(subset)
-    train, test = chronological_days(subset, test_days)
-    log.info("%d days total, holding out %d: %s to %s", len(files), len(test), test[0], test[-1])
+    train, test = source.split(test_days)
+    log.info(
+        "%d days total, holding out %d: %s to %s", len(source.days), len(test), test[0], test[-1]
+    )
     log.info("train days span %s to %s (not read here)", train[0], train[-1])
 
     windows = []
     for date in test:
-        day = read_raw_day(files[date])
+        day = source.read(date)
         for scene in day_to_scenes(day, min_agents=2):
             windows += build_windows(scene, stride=stride, min_agents=2)
         log.info("  %s: %d windows", date, len(windows))
@@ -46,7 +46,9 @@ def load_test_windows(subset: Path, test_days: int, stride: int) -> list:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--subset", default="data/trajair/7days1/7days1")
+    parser.add_argument("--source", choices=["trajair", "tartan"], default="tartan")
+    parser.add_argument("--root", default="data/tartan")
+    parser.add_argument("--airport", default="kbtp")
     parser.add_argument("--stride", type=int, default=10)
     parser.add_argument("--test-days", type=int, default=2)
     parser.add_argument("--criterion", choices=["proximity", "nmac"], default="proximity")
@@ -55,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     criterion = PROXIMITY if args.criterion == "proximity" else NMAC
 
-    test = load_test_windows(Path(args.subset), args.test_days, args.stride)
+    source = open_source(args.source, args.root, args.airport)
+    test = load_test_windows(source, args.test_days, args.stride)
     multi = [w for w in test if w.n_agents >= 2]
     print(
         f"\ncriterion: {criterion.name} "

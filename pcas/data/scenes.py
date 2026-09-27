@@ -70,6 +70,7 @@ def build_windows(
     stride: int = 10,
     min_agents: int = 1,
     min_motion_m: float = 50.0,
+    include_dense: bool = True,
 ) -> list[Window]:
     """Slide a window over one scene and emit every usable multi-agent problem."""
     frames = scene.frames
@@ -122,11 +123,16 @@ def build_windows(
         future = np.array(
             [[positions[(f, a)] for f in future_frames] for a in agent_ids], dtype=np.float32
         )
-        # Every second of the predicted span, for conflict labelling.
-        dense_frames = wanted[obs_len:]
-        future_dense = np.array(
-            [[positions[(f, a)] for f in dense_frames] for a in agent_ids], dtype=np.float32
-        )
+        # Every second of the predicted span, for conflict labelling. Training does not
+        # need it, and it is the bulk of a window's memory, so it is optional.
+        if include_dense:
+            dense_frames = wanted[obs_len:]
+            future_dense = np.array(
+                [[positions[(f, a)] for f in dense_frames] for a in agent_ids],
+                dtype=np.float32,
+            )
+        else:
+            future_dense = None
 
         # Drop aircraft that barely move across this window. The track-level filter in
         # adsb.py cannot catch a transponder that freezes for part of an otherwise moving
@@ -140,7 +146,9 @@ def build_windows(
                 continue
             if not keep.all():
                 agent_ids = tuple(a for a, k in zip(agent_ids, keep, strict=True) if k)
-                obs, future, future_dense = obs[keep], future[keep], future_dense[keep]
+                obs, future = obs[keep], future[keep]
+                if future_dense is not None:
+                    future_dense = future_dense[keep]
         wind = np.array(
             [
                 np.mean([wind_by_frame[f]["windx"] for f in obs_frames]),

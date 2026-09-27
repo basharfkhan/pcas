@@ -16,27 +16,33 @@ import sys
 import time
 from pathlib import Path
 
-from pcas.data.adsb import day_to_scenes, read_raw_day
+from pcas.data.adsb import day_to_scenes
 from pcas.data.scenes import build_windows
-from pcas.data.subsets import raw_day_files
+from pcas.data.sources import open_source
 from pcas.models.lstm import LSTMConfig, build_module, make_samples
 
 log = logging.getLogger("pcas.train")
 
 
-def windows_for(subset: Path, dates: list[str], stride: int, min_agents: int) -> list:
-    files = raw_day_files(subset)
+def windows_for(source, dates: list[str], stride: int, min_agents: int) -> list:
+    """Build windows for the given dates only, so the dataset need not fit in RAM."""
     windows = []
     for date in dates:
-        day = read_raw_day(files[date])
+        day = source.read(date)
         for scene in day_to_scenes(day, min_agents=min_agents):
-            windows += build_windows(scene, stride=stride, min_agents=min_agents)
+            # include_dense=False: training uses the 10 s waypoints, and the 1 Hz future
+            # would dominate memory across hundreds of sessions.
+            windows += build_windows(
+                scene, stride=stride, min_agents=min_agents, include_dense=False
+            )
     return windows
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--subset", default="data/trajair/111_days/111_days")
+    parser.add_argument("--source", choices=["trajair", "tartan"], default="tartan")
+    parser.add_argument("--root", default="data/tartan")
+    parser.add_argument("--airport", default="kbtp")
     parser.add_argument("--test-days", type=int, default=22)
     parser.add_argument("--val-days", type=int, default=11)
     parser.add_argument("--stride", type=int, default=10)
@@ -60,8 +66,8 @@ def main(argv: list[str] | None = None) -> int:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     log.info("device: %s", device)
 
-    subset = Path(args.subset)
-    dates = list(raw_day_files(subset))
+    source = open_source(args.source, args.root, args.airport)
+    dates = source.dates()
     test_dates = dates[-args.test_days :]
     val_dates = dates[-(args.test_days + args.val_days) : -args.test_days]
     train_dates = dates[: -(args.test_days + args.val_days)]
@@ -82,12 +88,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     log.info("building training windows...")
-    train_windows = windows_for(subset, train_dates, args.stride, 1)
+    train_windows = windows_for(source, train_dates, args.stride, 1)
     x_train, y_train = make_samples(train_windows, config)
     del train_windows
 
     log.info("building validation windows...")
-    val_windows = windows_for(subset, val_dates, args.stride, 1)
+    val_windows = windows_for(source, val_dates, args.stride, 1)
     x_val, y_val = make_samples(val_windows, config)
     del val_windows
 
