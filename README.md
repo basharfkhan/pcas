@@ -223,6 +223,68 @@ Two earlier conclusions in this file were withdrawn when this model arrived: "th
 band is not a clear win" and "nothing works at 90 to 120 s". Both were true of the physics
 baselines and the single-aircraft LSTM. Neither survived giving a model the other aircraft.
 
+## Multimodal predictions, and an honest look at the probabilities
+
+An aircraft on downwind either turns base or extends, and the average of those two futures is
+a path it would never fly. So the model can emit K hypotheses with a probability each, trained
+winner-takes-all with a cross-entropy over the mode logits. With two aircraft carrying K
+hypotheses each, a pair has K x K possible futures, and the conflict probability is the weight
+of the combinations that violate the threshold. The alert becomes a number rather than a
+yes/no.
+
+**The probability threshold turns out to be the best sensitivity knob available.** Compare the
+three ways of quietening a predictor, at around 10 false alarms per hour:
+
+| method | FA/hour | 0 to 30 s | 30 to 60 s | 60 to 90 s | 90 to 120 s |
+|---|---|---|---|---|---|
+| Kalman (horizon 120 s) | 10.0 | **0.746** | 0.249 | 0.151 | 0.063 |
+| Transformer, 1 mode (margin knob) | 10.8 | 0.348 | 0.303 | 0.251 | 0.126 |
+| **Transformer, 6 modes (P >= 0.50)** | 9.3 | 0.700 | **0.422** | 0.235 | **0.138** |
+
+The single-mode model can only be made quiet by tightening its separation margin, which wrecks
+near-term detection (0.348). The multimodal model is made quiet by raising the probability bar
+instead, which keeps 0.700 close in while still beating the Kalman filter 1.7x at 30 to 60 s
+and 2.2x past 90 s. Sweeping further trades false alarms for recall smoothly:
+
+| P >= | FA/hour | 0 to 30 s | 30 to 60 s | 60 to 90 s | 90 to 120 s | median lead |
+|---|---|---|---|---|---|---|
+| 0.50 | 9.3 | 0.700 | 0.422 | 0.235 | 0.138 | 14 s |
+| 0.35 | 19.3 | 0.736 | 0.523 | 0.360 | 0.241 | 23 s |
+| 0.20 | 43.0 | 0.784 | 0.653 | 0.534 | 0.376 | 30 s |
+| 0.05 | 116.9 | 0.844 | 0.847 | 0.788 | 0.606 | 39 s |
+
+Those high-recall rows are not deployable at 40 to 120 false alarms per hour, but they do say
+something worth knowing: the information needed to catch most conflicts two minutes ahead is
+present in the data. What is missing is a way to be selective about it.
+
+### The probabilities are not calibrated
+
+`AlertScorer.reliability()` compares what the model claimed against what happened:
+
+| stated probability | conflicts actually followed | pairs |
+|---|---|---|
+| 0.28 | 0.07 | 3,135 |
+| 0.49 | 0.15 | 1,174 |
+| 0.69 | 0.27 | 579 |
+| 0.94 | 0.70 | 535 |
+
+**Overconfident by a factor of 2 to 4 across the range.** The ordering is sound, so a higher
+number really does mean a likelier conflict and thresholding it works, which is why the sweep
+above behaves sensibly. But these numbers cannot be shown to a pilot as percentages, and this
+project is not going to print "30% chance" next to a figure that means 7%.
+
+Three candidates for why, in the order worth testing: the two aircraft's hypotheses are
+combined as if independent, when aircraft sequencing with each other are correlated;
+winner-takes-all training optimises the winning trajectory and never asks the mode
+probabilities to be calibrated; and a hard conflict threshold turns a near miss into a
+coin-flip that the model has no way to express. Post-hoc calibration on the validation split
+(isotonic or Platt) is the cheap first move, and it is the next thing on the roadmap.
+
+A note on comparing numbers across models: minADE and minFDE over K hypotheses are best-of-K,
+so the 6-mode model's minFDE of 840 m is not comparable to the single-mode model's 2004 m.
+Alerting at a matched false alarm rate is the comparison that stays fair, because extra
+hypotheses produce extra alerts as well as extra chances to be right.
+
 ### Corrections this section has been through
 
 Recorded because the method matters more than the number.
@@ -301,7 +363,8 @@ comparison stays with VATSIM, with its simulator caveat stated.
 - [ ] Conflict-weighted loss (the LSTM loses inside 30 s because cruise dominates its loss)
 - [ ] Like-for-like run on TrajAir's processed data and official split
 - [x] Multi-agent Transformer with social attention, plus the ablation that attributes the gain to context
-- [ ] Multimodal predictions with calibrated uncertainty (K hypotheses; the alerting code already takes them)
+- [x] Multimodal predictions: K hypotheses, joint-mode conflict probability, reliability curve
+- [ ] Calibrate those probabilities (they are 2 to 4x overconfident; isotonic on the validation split)
 - [ ] Ablations, error analysis by flight phase, failure gallery
 - [ ] Controlled vs. uncontrolled analysis on VATSIM
 - [ ] Live demo: predicted conflicts on live VATSIM traffic
