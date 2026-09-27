@@ -164,9 +164,29 @@ def build_raw_day(
     but the same underlying measurements, and the filtering decisions belong in one place
     so results stay comparable across datasets.
     """
-    alt_m = altitude_ft.astype(float) * FEET_TO_METERS
+    # Position and altitude fields are not always numbers: sessions contain values like a
+    # bare "-" where the receiver logged nothing. Those rows pass a null check but blow up
+    # a float conversion, so every field is coerced and unparsable rows are dropped.
+    numeric = pd.DataFrame(
+        {
+            "lat": pd.to_numeric(lat, errors="coerce").to_numpy(),
+            "lon": pd.to_numeric(lon, errors="coerce").to_numpy(),
+            "alt_ft": pd.to_numeric(altitude_ft, errors="coerce").to_numpy(),
+        }
+    )
+    usable = numeric.notna().all(axis=1).to_numpy()
+    if not usable.all():
+        log.debug("dropping %d row(s) with unparsable position or altitude", int((~usable).sum()))
+
+    ts = ts[usable]
+    agent_id = agent_id[usable]
+    numeric = numeric[usable]
+
+    alt_m = numeric["alt_ft"] * FEET_TO_METERS
     x, y, _ = frame.to_local(
-        lat.to_numpy(dtype=float), lon.to_numpy(dtype=float), np.zeros(len(lat))
+        numeric["lat"].to_numpy(dtype=float),
+        numeric["lon"].to_numpy(dtype=float),
+        np.zeros(len(numeric)),
     )
 
     # Some reports carry altitude 0, which is not an aircraft at sea level but a missing

@@ -275,3 +275,28 @@ def test_field_elevation_estimate_rejects_cruise_altitudes(tmp_path):
     assert day.field_elev_m < 1000
     # ...so the airliner is still tracked instead of being filtered away as "ground".
     assert not day.tracks.empty
+
+
+def test_non_numeric_position_rows_are_dropped(tmp_path):
+    # Sessions contain values like a bare "-" where the receiver logged nothing. Those rows
+    # pass a null check but used to blow up the float conversion and kill the whole run.
+    path = tmp_path / "1.csv"
+    lines = [HEADER]
+    for step in range(400):
+        t = 36000 + step
+        stamp = f"{t // 3600:02d}:{(t % 3600) // 60:02d}:{t % 60:02d}.000"
+        lat = KBTP.lat_deg + 0.0001 * step
+        lon = "-" if step % 50 == 0 else f"{KBTP.lon_deg + 0.0001 * step:.6f}"
+        lines.append(
+            f"1001,{stamp},09/18/2020,2000,,,{lat:.6f},{lon},1.0,1.0,0.0,N1001,{CALM_METAR}"
+        )
+        lines.append(
+            f"9999,{stamp},09/18/2020,1100,,,{KBTP.lat_deg:.6f},{KBTP.lon_deg:.6f},"
+            f"1.0,0.0,0.0,NPARKED,{CALM_METAR}"
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    day = read_raw_day(path)
+    assert not day.tracks.empty
+    assert day.tracks["x_m"].notna().all()
+    assert day.tracks["y_m"].notna().all()
