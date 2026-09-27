@@ -70,8 +70,21 @@ def main(argv: list[str] | None = None) -> int:
             if w.n_agents < 2:
                 continue
             model_dense = lstm.with_wind(w.wind).predict(w.obs, dense)
+            weights = getattr(lstm, "last_probabilities", None)
+            # With K hypotheses, requiring half the probability mass would silence the
+            # model; a low threshold here keeps this table comparable to the single-mode
+            # runs, and alert_tradeoff.py sweeps the threshold properly.
+            threshold = 0.05 if getattr(lstm.config, "n_modes", 1) > 1 else 0.5
             scorers[f"{model_name} (<=120s)"].update(
-                w, predicted_alerts(model_dense, dense, criterion), 120.0
+                w,
+                predicted_alerts(
+                    model_dense,
+                    dense,
+                    criterion,
+                    probability_threshold=threshold,
+                    mode_probabilities=weights,
+                ),
+                120.0,
             )
             kal_dense = kalman.predict(w.obs, dense)
             scorers["kalman_cv (<=120s)"].update(

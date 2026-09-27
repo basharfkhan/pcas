@@ -47,6 +47,11 @@ log = logging.getLogger("pcas.tradeoff")
 TAUS = (10.0, 20.0, 30.0, 40.0, 60.0, 90.0, 120.0)
 SCALES = (0.15, 0.25, 0.35, 0.5, 0.7, 1.0)
 PRED_HORIZONS = (10.0, 20.0, 30.0, 40.0, 60.0, 90.0, 120.0)
+# For a multimodal model the natural knob is the stated probability of conflict: alert
+# when P(conflict) crosses a threshold. With K hypotheses the violating combinations
+# rarely carry half the probability mass, so a 0.5 default silences the model almost
+# entirely; sweeping the threshold is how a real alerting system would be tuned.
+PROBABILITIES = (0.02, 0.05, 0.1, 0.2, 0.35, 0.5)
 BUCKETS = (0, 30, 60, 90, 120)
 
 
@@ -95,6 +100,12 @@ def main(argv: list[str] | None = None) -> int:
     for limit in PRED_HORIZONS:
         scorers[("kalman_cv_horizon", limit)] = AlertScorer(truth_criterion, args.stride)
         scorers[(f"{model_name}_horizon", limit)] = AlertScorer(truth_criterion, args.stride)
+    multimodal = getattr(model.config, "n_modes", 1) > 1
+    if multimodal:
+        for threshold in PROBABILITIES:
+            scorers[(f"{model_name}_probability", threshold)] = AlertScorer(
+                truth_criterion, args.stride
+            )
 
     for day in iter_days(source, test_dates):
         windows = []
@@ -105,6 +116,10 @@ def main(argv: list[str] | None = None) -> int:
             # Predict once per window, then reuse for every sensitivity setting.
             kal = kalman.predict(w.obs, dense)
             net = model.with_wind(w.wind).predict(w.obs, dense)
+            # A multimodal model states how likely each hypothesis is; using those weights
+            # instead of a uniform prior is the difference between a real probability and a
+            # count of hypotheses.
+            weights = getattr(model, "last_probabilities", None)
 
             for tau in TAUS:
                 scorers[("closure_rate", tau)].update(
@@ -116,8 +131,24 @@ def main(argv: list[str] | None = None) -> int:
                     w, predicted_alerts(kal, dense, test), horizon_s=120.0
                 )
                 scorers[(f"{model_name}_scale", scale)].update(
-                    w, predicted_alerts(net, dense, test), horizon_s=120.0
+                    w,
+                    predicted_alerts(net, dense, test, mode_probabilities=weights),
+                    horizon_s=120.0,
                 )
+
+            if multimodal:
+                for threshold in PROBABILITIES:
+                    scorers[(f"{model_name}_probability", threshold)].update(
+                        w,
+                        predicted_alerts(
+                            net,
+                            dense,
+                            truth_criterion,
+                            probability_threshold=threshold,
+                            mode_probabilities=weights,
+                        ),
+                        horizon_s=120.0,
+                    )
 
             for limit in PRED_HORIZONS:
                 keep = dense <= limit
@@ -125,7 +156,14 @@ def main(argv: list[str] | None = None) -> int:
                     w, predicted_alerts(kal[:, :, keep], dense[keep], truth_criterion), limit
                 )
                 scorers[(f"{model_name}_horizon", limit)].update(
-                    w, predicted_alerts(net[:, :, keep], dense[keep], truth_criterion), limit
+                    w,
+                    predicted_alerts(
+                        net[:, :, keep],
+                        dense[keep],
+                        truth_criterion,
+                        mode_probabilities=weights,
+                    ),
+                    limit,
                 )
         log.info("%s: %d windows", day.date, len(windows))
 
@@ -149,6 +187,12 @@ def main(argv: list[str] | None = None) -> int:
     table.to_csv(args.out, index=False)
     print("\n" + table.round(3).to_string(index=False))
     print(f"\nwritten to {args.out}")
+
+    if multimodal:
+        print("\nreliability of the stated conflict probability (threshold 0.05):")
+        scorer = scorers.get((f"{model_name}_probability", 0.05))
+        if scorer is not None and not scorer.frame().empty:
+            print(scorer.reliability().round(3).to_string(index=False))
 
     # Read each method at the quietest setting that stays under a common budget.
     print("\nmatched comparison, at most 2 false alarms per hour:")
