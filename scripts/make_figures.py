@@ -237,6 +237,19 @@ def figure_horizon(artifacts: Path, out: Path) -> None:
     ax.set_xlabel("seconds ahead")
     ax.set_ylabel("median position error (m)")
     ax.set_title("Where dead reckoning stops working", fontsize=11)
+    # The Transformer is multimodal, so its curve is best-of-K by construction. Saying so
+    # on the figure keeps the comparison honest without a reader having to find the prose.
+    ax.text(
+        0.5,
+        -0.16,
+        "Kalman and LSTM predict one path; the Transformer predicts 6 and is scored on its\n"
+        "closest, which flatters it. The alerting comparison is the like-for-like one.",
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=7.5,
+        color=MUTED,
+    )
     ax.set_xlim(0, 155)
     ax.grid(True, alpha=0.5, linewidth=0.6)
     fig.tight_layout()

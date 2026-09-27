@@ -5,6 +5,28 @@ collisions happen and where certified collision avoidance systems are least usef
 
 > Status: **early**. The VATSIM collector is running; the model is not built yet.
 
+## In three pictures
+
+![Detection against false alarms, by lead time](docs/figures/detection_vs_false_alarms.png)
+
+Every method can detect more conflicts by alerting more, so each is swept over its own
+sensitivity knob and read at a matched false alarm rate. Inside 30 s the physics baselines
+lead and the shaded budget is where a real system would live. In the longer bands the social
+Transformer is the only line that climbs at all.
+
+![Where dead reckoning stops working](docs/figures/error_vs_horizon.png)
+
+Median position error against how far ahead the prediction reaches. Straight-line motion is a
+good assumption for 20 s and a poor one at two minutes, which is exactly the window in which a
+pilot could still act on a warning.
+
+![Is a stated 50% chance really 50%?](docs/figures/reliability.png)
+
+The model states a probability of conflict. Raw, it was overconfident by 2 to 4x; calibrated
+on held-out sessions, it tracks the diagonal. Expected calibration error 0.0211 to 0.0005.
+
+Figures regenerate from saved results with `python scripts/make_figures.py`.
+
 ## The problem
 
 Most US airports have no tower. Pilots there separate themselves by looking out the window
