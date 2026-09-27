@@ -7,7 +7,7 @@ dependencies = [
     "requests>=2.31",
     # Some TartanAviation archives use Deflate64, which the standard library's zipfile
     # cannot read and which bsdtar extracts as padding without erroring.
-    "stream-unzip>=0.8",
+    "stream-unzip>=0.0.97",
     "pandas>=2.2",
     "pyarrow>=16.0",
     "PyYAML>=6.0",
