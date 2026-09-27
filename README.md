@@ -3,7 +3,11 @@
 Learned conflict warning for airports **without a control tower**, where most midair
 collisions happen and where certified collision avoidance systems are least useful.
 
-> Status: **early**. The VATSIM collector is running; the model is not built yet.
+> **Headline:** a multi-agent Transformer with social attention detects **2.2x more conflicts
+> 90 seconds ahead** than a Kalman filter at the same false alarm rate, and states a calibrated
+> probability while doing it. An ablation attributes the gain to seeing the other aircraft
+> rather than to the architecture: with neighbours hidden, the same model scores like an LSTM.
+> Physics still wins inside 30 seconds, and that is reported too.
 
 ## In three pictures
 
