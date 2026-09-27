@@ -75,7 +75,8 @@ def main(argv: list[str] | None = None) -> int:
 
     from pcas.models.load import load_predictor
 
-    lstm = load_predictor(args.checkpoint)
+    model = load_predictor(args.checkpoint)
+    model_name = model.name
     kalman = KalmanConstantVelocity()
 
     horizons = np.array(future_offsets()) - (OBS_LEN - 1)
@@ -90,10 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         scorers[("closure_rate", tau)] = AlertScorer(truth_criterion, args.stride)
     for scale in SCALES:
         scorers[("kalman_cv_scale", scale)] = AlertScorer(truth_criterion, args.stride)
-        scorers[("lstm_scale", scale)] = AlertScorer(truth_criterion, args.stride)
+        scorers[(f"{model_name}_scale", scale)] = AlertScorer(truth_criterion, args.stride)
     for limit in PRED_HORIZONS:
         scorers[("kalman_cv_horizon", limit)] = AlertScorer(truth_criterion, args.stride)
-        scorers[("lstm_horizon", limit)] = AlertScorer(truth_criterion, args.stride)
+        scorers[(f"{model_name}_horizon", limit)] = AlertScorer(truth_criterion, args.stride)
 
     for day in iter_days(source, test_dates):
         windows = []
@@ -103,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         for w in windows:
             # Predict once per window, then reuse for every sensitivity setting.
             kal = kalman.predict(w.obs, dense)
-            net = lstm.with_wind(w.wind).predict(w.obs, dense)
+            net = model.with_wind(w.wind).predict(w.obs, dense)
 
             for tau in TAUS:
                 scorers[("closure_rate", tau)].update(
@@ -114,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
                 scorers[("kalman_cv_scale", scale)].update(
                     w, predicted_alerts(kal, dense, test), horizon_s=120.0
                 )
-                scorers[("lstm_scale", scale)].update(
+                scorers[(f"{model_name}_scale", scale)].update(
                     w, predicted_alerts(net, dense, test), horizon_s=120.0
                 )
 
@@ -123,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
                 scorers[("kalman_cv_horizon", limit)].update(
                     w, predicted_alerts(kal[:, :, keep], dense[keep], truth_criterion), limit
                 )
-                scorers[("lstm_horizon", limit)].update(
+                scorers[(f"{model_name}_horizon", limit)].update(
                     w, predicted_alerts(net[:, :, keep], dense[keep], truth_criterion), limit
                 )
         log.info("%s: %d windows", day.date, len(windows))

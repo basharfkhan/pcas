@@ -50,9 +50,10 @@ def main(argv: list[str] | None = None) -> int:
     horizons = np.array(future_offsets()) - (OBS_LEN - 1)
     dense = np.arange(1.0, horizons.max() + 1.0)
 
-    accs = {name: MetricAccumulator(horizons_s=horizons) for name in ("lstm", "kalman_cv")}
+    model_name = lstm.name
+    accs = {name: MetricAccumulator(horizons_s=horizons) for name in (model_name, "kalman_cv")}
     scorers = {
-        "lstm (<=120s)": AlertScorer(criterion, window_stride_s=args.stride),
+        f"{model_name} (<=120s)": AlertScorer(criterion, window_stride_s=args.stride),
         "kalman_cv (<=120s)": AlertScorer(criterion, window_stride_s=args.stride),
         "closure_rate (tau=40s)": AlertScorer(criterion, window_stride_s=args.stride),
     }
@@ -63,14 +64,14 @@ def main(argv: list[str] | None = None) -> int:
             windows += build_windows(scene, stride=args.stride, min_agents=1)
 
         for w in windows:
-            accs["lstm"].update(lstm.with_wind(w.wind).predict(w.obs, horizons), w.future)
+            accs[model_name].update(lstm.with_wind(w.wind).predict(w.obs, horizons), w.future)
             accs["kalman_cv"].update(kalman.predict(w.obs, horizons), w.future)
 
             if w.n_agents < 2:
                 continue
-            lstm_dense = lstm.with_wind(w.wind).predict(w.obs, dense)
-            scorers["lstm (<=120s)"].update(
-                w, predicted_alerts(lstm_dense, dense, criterion), 120.0
+            model_dense = lstm.with_wind(w.wind).predict(w.obs, dense)
+            scorers[f"{model_name} (<=120s)"].update(
+                w, predicted_alerts(model_dense, dense, criterion), 120.0
             )
             kal_dense = kalman.predict(w.obs, dense)
             scorers["kalman_cv (<=120s)"].update(

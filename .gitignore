@@ -13,3 +13,10 @@ venv/
 *.log
 
 .env
+
+# Generated training artefacts. Model weights and cached sample tensors are outputs, not
+# source: the sample cache alone is 1.4 GB, which GitHub rightly refuses. Metrics and
+# training histories (csv, json) are small and worth keeping.
+artifacts/cache/
+*.npz
+*.pt
