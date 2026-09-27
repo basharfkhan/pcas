@@ -134,102 +134,110 @@ where a stationary target would otherwise flatter every metric.
 
 ## Baseline results
 
-Baselines on the full **111-day** dataset (109 usable days: two ship as zero-byte files),
-with the last **22 days held out chronologically** (32,760 test windows, 49,096 aircraft).
-Errors in metres, best of K = 1.
+Primary dataset is **TartanAviation KBTP**: 368 recording sessions (2020-08 to 2022-10), of
+which 298 train, 30 validate and the last **40 are held out chronologically**. That is
+500,294 training samples, 4.1x what TrajAir's 111 days gave. Errors in metres, best of K = 1,
+measured over 83,958 test windows and 142,720 aircraft.
 
 | model | minADE | minFDE (120 s) | horizontal | vertical | median FDE | p95 FDE |
 |---|---|---|---|---|---|---|
-| constant velocity | 1480 | 3354 | 3328 | 214 | 2639 | 8242 |
-| constant velocity (4 s fit) | 1504 | 3398 | 3348 | 294 | 2661 | 8149 |
-| constant turn rate | 1606 | 3647 | 3631 | 208 | 3381 | 7570 |
-| Kalman (constant velocity) | 1470 | 3338 | 3313 | 213 | 2627 | 8204 |
-| **LSTM** (single aircraft, 3.1M params) | **1095** | **2491** | 2482 | **124** | 2033 | 6020 |
+| constant velocity | 1594 | 3637 | 3571 | 257 | 3058 | 8346 |
+| constant velocity (4 s fit) | 1741 | 3869 | 3760 | 360 | 3261 | 8507 |
+| constant turn rate | 1829 | 4058 | 4004 | 250 | 3841 | 7930 |
+| Kalman (constant velocity) | 1586 | 3626 | 3559 | 258 | 3045 | 8322 |
+| **LSTM** (single aircraft, 3.1M params) | **1130** | **2539** | 2525 | **123** | 2065 | 6208 |
 
-The LSTM cuts trajectory error by about 25% against the best physics baseline, and 42%
-vertically. Note what that does and does not buy: see the alerting section below, where its
-advantage turns out to be confined to one band.
+The LSTM cuts trajectory error by 29% against the best physics baseline and 52% vertically.
+It also replicates: trained and tested on TrajAir's 111 days instead, the same architecture
+gave minADE 1095 m and minFDE 2491 m, within 2% of these numbers on a different, smaller
+test set.
 
 Three measurements say this model is limited by its inputs rather than its size or its
 optimisation, all pointing the same way:
 
 - **Capacity:** 223k parameters reach a validation FDE of 2485 m; 3.13M reach 2465 m.
 - **Optimisation:** fixing the target scaling (below) cut the epochs needed by roughly an
-  order of magnitude but moved final test FDE only from 2503 m to 2491 m.
+  order of magnitude but moved final test FDE by about 0.5%.
 - **What it can see:** one aircraft's own 11 seconds. The aircraft it might conflict with is
   not an input at all.
 
-Error grows steeply with horizon (Kalman, mean/median):
+## Headline result: the learned model owns the 30 to 60 s band, and nothing owns 90 s
 
-| horizon | 10 s | 30 s | 60 s | 90 s | 120 s |
-|---|---|---|---|---|---|
-| mean | 95 | 404 | 1158 | 2165 | 3338 |
-| median | 48 | 186 | 612 | 1417 | 2627 |
+Alerting on the 40 held-out TartanAviation KBTP sessions: 37,256 test windows holding 2 or
+more aircraft, 88,955 aircraft pairs, **1,686 conflicts**. Conflict = 0.5 nm horizontal and
+500 ft vertical broken at the same instant. Every method alerts at the last observed instant,
+is scored by identical code, and is checked every second.
 
-Two observations:
-
-1. **The physics assumption decays fast.** Under 20 s, dead reckoning is good, which is
-   why closure-rate alerting works for its intended job. At 120 s it is off by kilometres,
-   and 120 s is where a pilot could still comfortably act on a warning.
-2. **Constant turn rate is not automatically better.** Extrapolating a turn for 120 s
-   overshoots when the aircraft rolls out, so it loses to plain constant velocity on
-   average, while having the lowest p95. On the 7-day subset, aircraft turning at 1 deg/s
-   or more during the observed window had a median 120 s error of 5053 m against 2124 m
-   for aircraft that looked straight, and even the straight ones are wrong by kilometres,
-   because they turn *after* the observation window ends.
-
-## Headline result: the learned model's advantage is the 30 to 90 s band
-
-Alerting comparison on the 111-day dataset, last 22 days held out, 11,481 test windows
-holding 2 or more aircraft, 528 conflicts. Conflict = 0.5 nm horizontal and 500 ft vertical
-broken at the same instant. Every method alerts at the last observed instant, is scored by
-identical code, and is checked every second.
-
-**Detection rates are only meaningful at a matched false alarm rate.** Any method detects
-more by alerting more, so each one is swept over its own sensitivity knob (`artifacts/
-tradeoff.csv`, produced by `scripts/alert_tradeoff.py`): closure-rate alerting sweeps tau,
-and the predictors sweep how far ahead they may raise an alert.
-
-Read across at comparable false alarm budgets:
+**Detection rates only mean something at a matched false alarm rate**, so each method is
+swept over its own sensitivity knob (`artifacts/tradeoff_tartan.csv`, from
+`scripts/alert_tradeoff.py`): closure-rate alerting sweeps tau, and the predictors sweep how
+far ahead they may raise an alert. Reading across at comparable budgets:
 
 | false alarms/hour | method | 0 to 30 s | 30 to 60 s | 60 to 90 s | 90 to 120 s |
 |---|---|---|---|---|---|
-| ~1.6 | closure rate (tau 40) | **0.633** | 0.100 | | |
-| ~1.6 | LSTM (horizon 30 s) | 0.596 | | | |
-| ~1.8 | Kalman (horizon 30 s) | **0.693** | | | |
-| ~2.8 | closure rate (tau 60) | 0.651 | 0.122 | | |
-| ~2.8 | Kalman (horizon 40 s) | **0.702** | 0.200 | | |
-| ~3.0 | LSTM (horizon 40 s) | 0.615 | **0.375** | | |
-| ~5.4 | closure rate (tau 90) | 0.656 | 0.203 | 0.040 | |
-| ~5.9 | LSTM (horizon 60 s) | 0.619 | **0.333** | | |
-| ~7.6 | closure rate (tau 120) | 0.656 | 0.203 | 0.051 | 0.000 |
-| ~11.6 | LSTM (horizon 90 s) | 0.619 | **0.390** | **0.121** | |
-| ~16.0 | LSTM (horizon 120 s) | 0.628 | **0.398** | **0.182** | **0.080** |
+| ~1.7 | closure rate (tau 40) | 0.675 | 0.091 | | |
+| ~2.1 | Kalman (horizon 30 s) | **0.730** | | | |
+| ~2.1 | LSTM (horizon 30 s) | 0.637 | | | |
+| ~3.4 | closure rate (tau 60) | 0.689 | 0.156 | | |
+| ~3.3 | Kalman (horizon 40 s) | **0.736** | 0.174 | | |
+| ~3.8 | LSTM (horizon 40 s) | 0.655 | **0.248** | | |
+| ~5.7 | closure rate (tau 90) | 0.693 | 0.202 | 0.090 | |
+| ~5.8 | Kalman (horizon 60 s) | **0.740** | 0.228 | | |
+| ~7.1 | LSTM (horizon 60 s) | 0.662 | **0.309** | | |
+| ~7.1 | closure rate (tau 120) | 0.693 | 0.205 | 0.122 | 0.052 |
+| ~10.0 | Kalman (horizon 120 s) | 0.746 | 0.249 | 0.151 | 0.063 |
+| ~12.6 | LSTM (horizon 90 s) | 0.667 | **0.367** | **0.177** | |
+| ~18.7 | LSTM (horizon 120 s) | 0.668 | 0.376 | 0.209 | 0.092 |
 
-What this says:
+Five things this supports, and two it does not:
 
-1. **Close in, physics wins.** In the 0 to 30 s band the Kalman filter is best (0.702) and
-   closure-rate alerting is close behind (0.633 to 0.656). The LSTM is slightly *worse*
-   (0.60 to 0.65), which makes sense: it is trained to minimise average trajectory error,
-   dominated by ordinary cruise, and it smooths. Nothing here needs a neural network.
-2. **The learned model's advantage is the 30 to 90 s band.** At ~3 false alarms per hour it
-   detects 0.375 of conflicts arriving 30 to 60 s out, against 0.122 for closure-rate
-   alerting at a *lower* rate (2.8) and 0.200 for Kalman at the same rate. In the 60 to
-   90 s band it reaches 0.121 to 0.182 where closure-rate alerting manages 0.04 to 0.051.
-   It is the only method with any detection at all beyond 90 s (0.080).
-3. **Lead time follows.** Median lead time rises from 1 s for every physics setting to
-   4 to 15 s for the LSTM's longer horizons. The physics methods' detections fire when the
-   aircraft are already converging.
-4. **Better trajectories are not the same as better alerts.** The LSTM cuts trajectory
-   error by 25% (see above) and yet loses to physics in the 0 to 30 s band. Average error
-   is dominated by ordinary cruise; conflicts happen in turning traffic near the field.
-   Optimising the first does not automatically serve the second, which is why this project
-   reports alerting metrics rather than FDE alone.
-5. **Capacity is not the lever.** Three measurements agree that the model is limited by its
-   inputs: 14 times the parameters buys 0.8%, fixing the optimisation moved final error by
-   0.5%, and the aircraft it might conflict with is not an input at all. That is the
-   argument for the multi-agent Transformer, and it means the attention ablation will
-   measure something real rather than confirm a prior.
+1. **Close in, physics wins.** In the 0 to 30 s band the Kalman filter leads at every budget
+   (0.73 to 0.75), closure-rate alerting follows (0.68 to 0.69), and the LSTM trails
+   (0.64 to 0.67). Nothing in that band needs a neural network.
+2. **The learned model's clear win is 30 to 60 s.** At ~3.5 false alarms per hour it detects
+   0.248 against 0.156 for closure-rate logic, and at ~7 per hour 0.309 against 0.205. That
+   is the band where an aircraft's *intent* matters and straight-line motion has stopped
+   being informative.
+3. **Lead time follows.** Median lead time is 1 s for every closure-rate setting and 1 to 3 s
+   for Kalman, against 3 to 24 s for the LSTM. The physics methods fire when the aircraft are
+   already converging.
+4. **Below about 2 false alarms per hour, use physics.** The learned model cannot be made
+   that quiet without losing the horizon that makes it useful.
+5. **Better trajectories are not the same as better alerts.** The LSTM cuts trajectory error
+   by 29% and still loses inside 30 s. Average error is dominated by ordinary cruise;
+   conflicts happen in turning traffic near the field. Optimising the first does not serve
+   the second, which is why this project reports alerting metrics rather than FDE alone.
+
+Not supported:
+
+- **The 60 to 90 s band is not a clear win.** Matched on false alarms, the LSTM's 0.177 at
+  12.6 per hour sits near Kalman's 0.151 at 10.0. An earlier, smaller sample made this look
+  like a 3x improvement. It is not.
+- **Nothing works at 90 to 120 s.** The best figure at any budget is 0.092, and the physics
+  baselines reach 0.052 to 0.063. Two minutes of warning is out of reach for every method
+  here, including the learned one.
+
+### Corrections this section has been through
+
+Recorded because the method matters more than the number.
+
+**The sample was too small, twice.** A 7-day version reported 28% and 17% detection in the
+60 to 90 s and 90 to 120 s bands; at 528 conflicts those fell to 5% and 2%, and at 1,686
+conflicts the ordering firmed up but the 60 to 90 s advantage shrank to nothing much. Every
+conflict statistic here was quoted too confidently at least once before it settled.
+
+**The sensitivity knob was wrong, and it produced a false negative.** The first sweep
+quietened the predictors by demanding the predicted separation break the threshold by a
+tighter margin. A trajectory off by kilometres at 90 s cannot be asked to predict a near
+miss, so tightening destroyed recall rather than trimming false alarms, and the conclusion
+written down was that the learned model never beats closure-rate logic. Sweeping the horizon
+instead, the direct analogue of tau, reverses that in the 30 to 60 s band. Both knobs stay in
+the CSV so the difference is visible.
+
+**Scoring was unfair to the predictors.** Closure-rate alerting solves for the closest point
+of approach analytically, while predicted trajectories were only checked at their 10 s
+waypoints, so they stepped over brief violations. Alerting now checks every second, which
+moved near-term detection by about 20 points.
 
 ### Training setup, and a bug worth naming
 
@@ -242,28 +250,32 @@ Inputs were normalised but **targets were not**, and that cost a training run. W
 delta of 100 m against targets of thousands of metres, almost every sample sat in the loss's
 linear regime, so gradients arrived with near-constant magnitude and the output layer barely
 moved. The 2-layer model limped through, which is why it was still improving when it hit its
-epoch cap; the 3-layer model collapsed to predicting a constant and scored worse than
-Kalman. Scaling the targets fixed it: five epochs on four days now beat what previously took
-27 epochs on 76.
+epoch cap; the 3-layer model collapsed to predicting a constant and scored worse than Kalman.
+Scaling the targets fixed it.
 
-### Two corrections this section has been through
+## What the data is actually like
 
-Both are recorded because the method matters more than the number.
+Both datasets are real recordings, and most of the work was making them safe to model. Six
+distinct defects, each of which used to end a run:
 
-**The sample was too small.** An earlier version used 7 days and reported 28% and 17%
-detection in the 60 to 90 s and 90 to 120 s bands. With 528 conflicts instead of 77 those
-fell to 5% and 2% for the physics baselines. Small-sample conflict statistics are not worth
-quoting.
+| defect | where | how it was handled |
+|---|---|---|
+| Deflate64 archives | TartanAviation zips | `zipfile` refuses them, and **bsdtar writes correctly-sized files full of padding while only warning** (3.2 GB of plausible, empty CSVs). `stream-unzip` reads them properly |
+| Line truncated mid-field | a full-day session file | Drop lines with unbalanced quotes: only ever a truncated tail |
+| Binary file in place of CSV | kbtp 2020-09-01, `23.csv` | Header check, skip the file |
+| `Altitude` 0 meaning "missing" | both datasets | Excluded: left in, it put the field elevation at 0 m against a true 382 m and switched the ground filter off |
+| `Lon` recorded as `-` | TartanAviation sessions | Coerce per row, drop unparsable rows |
+| Sessions sampled at 4 to 6 s | mostly KAGC | `RawDay.median_gap_s` flags them: 1 Hz tracks are impossible, and the gap rule otherwise shatters every track and yields nothing silently |
+| Field elevation estimated from cruise traffic | a quiet KBTP session | Estimate rejected when implausible (one session put "ground" at 10,666 m, filtering out every aircraft) |
 
-**The sensitivity knob was wrong, and it produced a false negative.** The first sweep
-quietened the predictors by demanding the predicted separation break the threshold by a
-tighter margin. That looked reasonable and was not: a trajectory off by kilometres at 90 s
-cannot be asked to predict a near miss, so tightening destroyed recall instead of trimming
-false alarms. Under that knob, at ~1.6 false alarms per hour, the LSTM scored 0.128 in the
-0 to 30 s band against closure-rate alerting's 0.633, and the conclusion written down was
-that the learned model does not beat closure-rate logic anywhere. Sweeping the *horizon*
-instead, the direct analogue of tau, reverses that in the 30 to 90 s band. Both knobs are
-kept in `tradeoff.csv` so the difference is visible.
+About 1% of sessions are unreadable, so reads go through `iter_days`, which skips and counts
+them rather than ending a job that has spent an hour building windows.
+
+**KAGC is parked.** The towered airport was the reason to take this dataset on, since it
+promised a towered-versus-non-towered comparison on real aircraft instead of simulated
+traffic. It does not survive the data: 7 of 10 sampled sessions report every 4 to 6 s, and the
+ones that do not produce a handful of windows with **no multi-agent windows at all**. That
+comparison stays with VATSIM, with its simulator caveat stated.
 
 ## Roadmap
 
@@ -272,7 +284,9 @@ kept in `tradeoff.csv` so the difference is visible.
 - [x] Metrics harness and physics baselines (constant velocity, constant turn rate, Kalman)
 - [x] TCAS-style closure-rate alerting baseline, and conflict labelling
 - [x] LSTM baseline (single aircraft, no attention)
-- [x] Full 111-day dataset (32,760 test windows over 22 held-out days)
+- [x] Full 111-day TrajAir dataset
+- [x] TartanAviation KBTP: 368 sessions, 4.1x the training data, 1,686 test conflicts
+- [ ] Conflict-weighted loss (the LSTM loses inside 30 s because cruise dominates its loss)
 - [ ] Like-for-like run on TrajAir's processed data and official split
 - [ ] Multi-agent Transformer with social attention (the capacity result says this, not more capacity, is the lever)
 - [ ] Multimodal predictions with calibrated uncertainty
