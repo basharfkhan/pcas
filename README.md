@@ -132,90 +132,96 @@ straight off the name and cannot leak a day across both sides.
 freezes for a stretch still gets through. A per-window check belongs with the baselines,
 where a stationary target would otherwise flatter every metric.
 
-## Baseline results
+## Results
 
 Primary dataset is **TartanAviation KBTP**: 368 recording sessions (2020-08 to 2022-10), of
 which 298 train, 30 validate and the last **40 are held out chronologically**. That is
 500,294 training samples, 4.1x what TrajAir's 111 days gave. Errors in metres, best of K = 1,
-measured over 83,958 test windows and 142,720 aircraft.
+over 83,958 test windows and 142,720 aircraft.
 
-| model | minADE | minFDE (120 s) | horizontal | vertical | median FDE | p95 FDE |
-|---|---|---|---|---|---|---|
-| constant velocity | 1594 | 3637 | 3571 | 257 | 3058 | 8346 |
-| constant velocity (4 s fit) | 1741 | 3869 | 3760 | 360 | 3261 | 8507 |
-| constant turn rate | 1829 | 4058 | 4004 | 250 | 3841 | 7930 |
-| Kalman (constant velocity) | 1586 | 3626 | 3559 | 258 | 3045 | 8322 |
-| **LSTM** (single aircraft, 3.1M params) | **1130** | **2539** | 2525 | **123** | 2065 | 6208 |
+| model | params | minADE | minFDE (120 s) | vertical | median FDE |
+|---|---|---|---|---|---|
+| constant velocity | | 1594 | 3637 | 257 | 3058 |
+| constant turn rate | | 1829 | 4058 | 250 | 3841 |
+| Kalman (constant velocity) | | 1586 | 3626 | 258 | 3045 |
+| LSTM, single aircraft | 3.1M | 1130 | 2539 | 123 | 2065 |
+| Transformer, neighbours hidden | 503k | 1130 | 2538 | 125 | 2052 |
+| **Transformer, social attention** | 503k | **925** | **2004** | **108** | **1342** |
 
-The LSTM cuts trajectory error by 29% against the best physics baseline and 52% vertically.
-It also replicates: trained and tested on TrajAir's 111 days instead, the same architecture
-gave minADE 1095 m and minFDE 2491 m, within 2% of these numbers on a different, smaller
-test set.
+## The central finding: context, not capacity
 
-Three measurements say this model is limited by its inputs rather than its size or its
-optimisation, all pointing the same way:
+Four measurements, in the order they were made, each narrowing where the limit actually was:
 
-- **Capacity:** 223k parameters reach a validation FDE of 2485 m; 3.13M reach 2465 m.
-- **Optimisation:** fixing the target scaling (below) cut the epochs needed by roughly an
-  order of magnitude but moved final test FDE by about 0.5%.
-- **What it can see:** one aircraft's own 11 seconds. The aircraft it might conflict with is
-  not an input at all.
+| question | measurement | answer |
+|---|---|---|
+| Is it model size? | 223k params: val FDE 2485 m. 3.13M params: 2465 m | No: 14x capacity buys 0.8% |
+| Is it optimisation? | Fixing target scaling cut epochs-to-converge ~10x | No: final test FDE moved 0.5% |
+| Is it the architecture? | Transformer with neighbours **hidden**: minFDE 2538 m | No: matches the LSTM's 2539 m |
+| Is it the missing context? | Same Transformer with neighbours **visible**: 2004 m | **Yes: 21% better** |
 
-## Headline result: the learned model owns the 30 to 60 s band, and nothing owns 90 s
+The third row is what makes this an attribution rather than a story. The ablation shares the
+architecture, the cached input tensors, the loss, the schedule and the split with the social
+model; only the neighbour tensor is masked. It lands within noise of the LSTM on every metric
+measured, including each lead-time band (60 to 90 s detection: 0.225 against the LSTM's
+0.225). So the gain is not "a Transformer beats an LSTM". It is "seeing the other aircraft
+beats not seeing it".
 
-Alerting on the 40 held-out TartanAviation KBTP sessions: 37,256 test windows holding 2 or
-more aircraft, 88,955 aircraft pairs, **1,686 conflicts**. Conflict = 0.5 nm horizontal and
-500 ft vertical broken at the same instant. Every method alerts at the last observed instant,
-is scored by identical code, and is checked every second.
+Why that should be true is not mysterious. Aircraft in a traffic pattern are not independent:
+a pilot extends the downwind to follow slower traffic, turns base early to fit in front of
+someone, or goes around because the runway is occupied. None of that is inferable from one
+aircraft's own last 11 seconds, and all of it is fairly predictable given the aircraft it is
+sequencing with. It also explains why the gain grows with horizon: over 10 s an aircraft
+simply continues, while over 90 s what it does is largely decided by who else is there.
 
-**Detection rates only mean something at a matched false alarm rate**, so each method is
-swept over its own sensitivity knob (`artifacts/tradeoff_tartan.csv`, from
-`scripts/alert_tradeoff.py`): closure-rate alerting sweeps tau, and the predictors sweep how
-far ahead they may raise an alert. Reading across at comparable budgets:
+## Alerting: where each method is actually worth using
+
+Alerting on the 40 held-out sessions: 37,256 test windows holding 2 or more aircraft, 88,955
+aircraft pairs, **1,686 conflicts**. Conflict = 0.5 nm horizontal and 500 ft vertical broken
+at the same instant. Every method alerts at the last observed instant, is scored by identical
+code, and is checked every second.
+
+**Detection rates only mean something at a matched false alarm rate**, so each method is swept
+over its own sensitivity knob (`artifacts/tradeoff_transformer.csv`, from
+`scripts/alert_tradeoff.py`). Reading across at comparable budgets:
 
 | false alarms/hour | method | 0 to 30 s | 30 to 60 s | 60 to 90 s | 90 to 120 s |
 |---|---|---|---|---|---|
+| ~0.3 | Kalman (horizon 10 s) | **0.872** | | | |
 | ~1.7 | closure rate (tau 40) | 0.675 | 0.091 | | |
-| ~2.1 | Kalman (horizon 30 s) | **0.730** | | | |
-| ~2.1 | LSTM (horizon 30 s) | 0.637 | | | |
+| ~1.7 | Transformer (horizon 30 s) | 0.665 | | | |
+| ~2.1 | Kalman (horizon 30 s) | 0.730 | | | |
 | ~3.4 | closure rate (tau 60) | 0.689 | 0.156 | | |
 | ~3.3 | Kalman (horizon 40 s) | **0.736** | 0.174 | | |
-| ~3.8 | LSTM (horizon 40 s) | 0.655 | **0.248** | | |
+| ~3.2 | **Transformer (horizon 40 s)** | 0.687 | **0.380** | | |
 | ~5.7 | closure rate (tau 90) | 0.693 | 0.202 | 0.090 | |
-| ~5.8 | Kalman (horizon 60 s) | **0.740** | 0.228 | | |
-| ~7.1 | LSTM (horizon 60 s) | 0.662 | **0.309** | | |
-| ~7.1 | closure rate (tau 120) | 0.693 | 0.205 | 0.122 | 0.052 |
-| ~10.0 | Kalman (horizon 120 s) | 0.746 | 0.249 | 0.151 | 0.063 |
-| ~12.6 | LSTM (horizon 90 s) | 0.667 | **0.367** | **0.177** | |
-| ~18.7 | LSTM (horizon 120 s) | 0.668 | 0.376 | 0.209 | 0.092 |
+| ~7.5 | **Transformer (horizon 60 s)** | 0.696 | **0.413** | | |
+| ~10.0 | Kalman (horizon 120 s) | **0.746** | 0.249 | 0.151 | 0.063 |
+| ~10.8 | **Transformer (margin 0.70)** | 0.348 | 0.303 | **0.251** | **0.126** |
+| ~15.6 | **Transformer (horizon 90 s)** | 0.706 | **0.503** | **0.315** | |
+| ~26.0 | Transformer (horizon 120 s) | 0.709 | 0.517 | 0.418 | 0.259 |
 
-Five things this supports, and two it does not:
+Read as advice about which method to deploy where:
 
-1. **Close in, physics wins.** In the 0 to 30 s band the Kalman filter leads at every budget
-   (0.73 to 0.75), closure-rate alerting follows (0.68 to 0.69), and the LSTM trails
-   (0.64 to 0.67). Nothing in that band needs a neural network.
-2. **The learned model's clear win is 30 to 60 s.** At ~3.5 false alarms per hour it detects
-   0.248 against 0.156 for closure-rate logic, and at ~7 per hour 0.309 against 0.205. That
-   is the band where an aircraft's *intent* matters and straight-line motion has stopped
-   being informative.
-3. **Lead time follows.** Median lead time is 1 s for every closure-rate setting and 1 to 3 s
-   for Kalman, against 3 to 24 s for the LSTM. The physics methods fire when the aircraft are
-   already converging.
-4. **Below about 2 false alarms per hour, use physics.** The learned model cannot be made
-   that quiet without losing the horizon that makes it useful.
-5. **Better trajectories are not the same as better alerts.** The LSTM cuts trajectory error
-   by 29% and still loses inside 30 s. Average error is dominated by ordinary cruise;
-   conflicts happen in turning traffic near the field. Optimising the first does not serve
-   the second, which is why this project reports alerting metrics rather than FDE alone.
+1. **Under ~2 false alarms per hour, use physics.** Kalman detects 0.872 of conflicts arriving
+   inside 10 s at 0.3 per hour. Nothing learned competes at that budget, and for a last-resort
+   alert that is the right budget.
+2. **Inside 30 s, physics still wins.** Kalman leads at every budget (0.73 to 0.75) with the
+   Transformer close behind (0.67 to 0.71). Closure-rate logic sits between them. This band
+   does not need a neural network.
+3. **From 30 to 90 s, the learned model wins clearly, and at matched cost.** At ~3.3 per hour
+   it detects 0.380 of 30 to 60 s conflicts against 0.174 for Kalman and 0.156 for closure-rate
+   logic. At ~10.8 per hour it reaches 0.251 in the 60 to 90 s band against Kalman's 0.151 at
+   10.0. Median lead time runs 3 to 23 s against 1 to 3 s for the physics methods.
+4. **Past 90 s something finally works, barely.** 0.126 at ~10.8 false alarms per hour, twice
+   Kalman's 0.063 at a comparable budget. Two minutes of warning remains mostly out of reach.
+5. **The knob matters as much as the model.** Limiting the horizon keeps a predictor inside the
+   regime where it is accurate; tightening the separation margin instead wrecks near-term
+   detection (the Transformer drops to 0.348 at 0 to 30 s) while buying the long bands. Which
+   knob to use is an operational choice, not a detail.
 
-Not supported:
-
-- **The 60 to 90 s band is not a clear win.** Matched on false alarms, the LSTM's 0.177 at
-  12.6 per hour sits near Kalman's 0.151 at 10.0. An earlier, smaller sample made this look
-  like a 3x improvement. It is not.
-- **Nothing works at 90 to 120 s.** The best figure at any budget is 0.092, and the physics
-  baselines reach 0.052 to 0.063. Two minutes of warning is out of reach for every method
-  here, including the learned one.
+Two earlier conclusions in this file were withdrawn when this model arrived: "the 60 to 90 s
+band is not a clear win" and "nothing works at 90 to 120 s". Both were true of the physics
+baselines and the single-aircraft LSTM. Neither survived giving a model the other aircraft.
 
 ### Corrections this section has been through
 
@@ -233,6 +239,12 @@ miss, so tightening destroyed recall rather than trimming false alarms, and the 
 written down was that the learned model never beats closure-rate logic. Sweeping the horizon
 instead, the direct analogue of tau, reverses that in the 30 to 60 s band. Both knobs stay in
 the CSV so the difference is visible.
+
+**Two conclusions were overturned by a better model, not by a better measurement.** With
+only physics baselines and a single-aircraft LSTM in hand, this file said the 60 to 90 s band
+was not a clear win and that nothing worked past 90 s. Social attention reached 0.251 and
+0.126 in those bands at a matched false alarm rate. A negative result about the models you
+have is not a negative result about the problem.
 
 **Scoring was unfair to the predictors.** Closure-rate alerting solves for the closest point
 of approach analytically, while predicted trajectories were only checked at their 10 s
@@ -288,8 +300,8 @@ comparison stays with VATSIM, with its simulator caveat stated.
 - [x] TartanAviation KBTP: 368 sessions, 4.1x the training data, 1,686 test conflicts
 - [ ] Conflict-weighted loss (the LSTM loses inside 30 s because cruise dominates its loss)
 - [ ] Like-for-like run on TrajAir's processed data and official split
-- [ ] Multi-agent Transformer with social attention (the capacity result says this, not more capacity, is the lever)
-- [ ] Multimodal predictions with calibrated uncertainty
+- [x] Multi-agent Transformer with social attention, plus the ablation that attributes the gain to context
+- [ ] Multimodal predictions with calibrated uncertainty (K hypotheses; the alerting code already takes them)
 - [ ] Ablations, error analysis by flight phase, failure gallery
 - [ ] Controlled vs. uncontrolled analysis on VATSIM
 - [ ] Live demo: predicted conflicts on live VATSIM traffic
