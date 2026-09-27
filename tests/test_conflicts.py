@@ -270,3 +270,76 @@ def test_window_without_dense_future_is_rejected():
     )
     with pytest.raises(ValueError, match="future_dense"):
         scorer.update(bare, pd.DataFrame(columns=["i", "j", "alert_time_s"]), 120.0)
+
+
+def test_joint_mode_probability_weights_hypothesis_pairs():
+    horizons = np.array([30.0])
+    # Aircraft 0 has two hypotheses: one collides with aircraft 1's only hypothesis.
+    pred = np.zeros((2, 2, 1, 3))
+    pred[0, 0, 0, 0] = 0.0  # on top of aircraft 1
+    pred[0, 1, 0, 0] = 9000.0  # far away
+    pred[1, :, 0, 0] = 0.0
+
+    # Equal weights: one of two combinations violates, so 0.5.
+    alerts = predicted_alerts(pred, horizons, TIGHT, probability_threshold=0.1)
+    assert alerts.iloc[0]["probability"] == pytest.approx(0.5)
+
+    # Weighted: the colliding hypothesis carries 10% of aircraft 0's probability.
+    weighted = predicted_alerts(
+        pred,
+        horizons,
+        TIGHT,
+        probability_threshold=0.01,
+        mode_probabilities=np.array([[0.1, 0.9], [1.0, 0.0]]),
+    )
+    assert weighted.iloc[0]["probability"] == pytest.approx(0.1)
+
+
+def test_probability_threshold_filters_unlikely_conflicts():
+    horizons = np.array([30.0])
+    pred = np.zeros((2, 4, 1, 3))
+    pred[0, 0, 0, 0] = 0.0
+    pred[0, 1:, 0, 0] = 9000.0
+    pred[1, :, 0, 0] = 0.0
+
+    # One of aircraft 0's four hypotheses collides, and all four of aircraft 1's are
+    # co-located, so 4 of the 16 combinations violate: 25%.
+    assert predicted_alerts(pred, horizons, TIGHT, probability_threshold=0.5).empty
+    loose = predicted_alerts(pred, horizons, TIGHT, probability_threshold=0.2)
+    assert loose.iloc[0]["probability"] == pytest.approx(0.25)
+
+
+def test_certain_conflict_has_probability_one():
+    horizons = np.array([30.0])
+    pred = np.zeros((2, 3, 1, 3))  # every hypothesis of both aircraft is co-located
+    alerts = predicted_alerts(pred, horizons, TIGHT, probability_threshold=0.5)
+    assert alerts.iloc[0]["probability"] == pytest.approx(1.0)
+
+
+def test_reliability_compares_stated_probability_with_outcomes():
+    scorer = AlertScorer(criterion=TIGHT, window_stride_s=10.0)
+
+    # Two windows called 90% likely: one conflicts, one does not.
+    event = make_window(converging(closing_speed=20.0, start_gap=1500.0))
+    quiet = make_window(converging(closing_speed=0.0, start_gap=9000.0))
+    for window in (event, quiet):
+        scorer.update(
+            window,
+            pd.DataFrame([{"i": 0, "j": 1, "alert_time_s": 60.0, "probability": 0.9}]),
+            120.0,
+        )
+
+    table = scorer.reliability()
+    row = table.iloc[-1]
+    assert row["n"] == 2
+    assert row["predicted"] == pytest.approx(0.9)
+    # Claimed 90%, happened 50% of the time: overconfident, and visibly so.
+    assert row["observed"] == pytest.approx(0.5)
+
+
+def test_reliability_is_empty_without_probabilities():
+    scorer = AlertScorer(criterion=TIGHT)
+    scorer.update(
+        make_window(converging()), pd.DataFrame(columns=["i", "j", "alert_time_s"]), 120.0
+    )
+    assert scorer.reliability().empty

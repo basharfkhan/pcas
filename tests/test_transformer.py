@@ -111,14 +111,34 @@ def test_samples_are_flattened_per_aircraft():
 # --- module -------------------------------------------------------------------
 
 
-def test_forward_shape_and_finiteness():
-    config = TransformerConfig(d_model=32, n_heads=2, n_temporal_layers=1, max_neighbours=3)
+def test_forward_returns_hypotheses_and_logits():
+    config = TransformerConfig(
+        d_model=32, n_heads=2, n_temporal_layers=1, max_neighbours=3, n_modes=6
+    )
     module = build_module(config)
     own, others, mask, _ = scene_tensors(make_window(3).obs, config, np.zeros(2))
 
-    out = module(torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask))
-    assert out.shape == (3, 12, 3)
-    assert torch.isfinite(out).all()
+    trajectories, logits = module(
+        torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask)
+    )
+    assert trajectories.shape == (3, 6, 12, 3)
+    assert logits.shape == (3, 6)
+    assert torch.isfinite(trajectories).all()
+    assert torch.isfinite(logits).all()
+
+
+def test_single_mode_keeps_the_hypothesis_dimension():
+    config = TransformerConfig(d_model=32, n_heads=2, n_temporal_layers=1, n_modes=1)
+    module = build_module(config)
+    own, others, mask, _ = scene_tensors(make_window(2).obs, config, np.zeros(2))
+
+    trajectories, logits = module(
+        torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask)
+    )
+    assert trajectories.shape == (2, 1, 12, 3)
+    # One hypothesis means its probability is exactly 1.
+    probabilities = torch.softmax(logits, dim=-1).detach().numpy()
+    assert probabilities.squeeze(-1) == pytest.approx(np.ones(2), abs=1e-6)
 
 
 def test_aircraft_with_no_neighbours_does_not_produce_nans():
@@ -128,8 +148,11 @@ def test_aircraft_with_no_neighbours_does_not_produce_nans():
     module = build_module(config)
     own, others, mask, _ = scene_tensors(make_window(1).obs, config, np.zeros(2))
 
-    out = module(torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask))
-    assert torch.isfinite(out).all()
+    trajectories, logits = module(
+        torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask)
+    )
+    assert torch.isfinite(trajectories).all()
+    assert torch.isfinite(logits).all()
 
 
 def test_social_ablation_ignores_neighbours():
@@ -140,8 +163,10 @@ def test_social_ablation_ignores_neighbours():
     own, others, mask, _ = scene_tensors(make_window(3).obs, config, np.zeros(2))
 
     with torch.no_grad():
-        baseline = module(torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask))
-        scrambled = module(
+        baseline, _ = module(
+            torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask)
+        )
+        scrambled, _ = module(
             torch.from_numpy(own),
             torch.from_numpy(others) + 5.0,
             torch.from_numpy(mask),
@@ -155,8 +180,10 @@ def test_social_model_does_use_neighbours():
     own, others, mask, _ = scene_tensors(make_window(3).obs, config, np.zeros(2))
 
     with torch.no_grad():
-        baseline = module(torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask))
-        scrambled = module(
+        baseline, _ = module(
+            torch.from_numpy(own), torch.from_numpy(others), torch.from_numpy(mask)
+        )
+        scrambled, _ = module(
             torch.from_numpy(own),
             torch.from_numpy(others) + 5.0,
             torch.from_numpy(mask),
@@ -175,6 +202,34 @@ def test_predictor_matches_the_common_interface():
     pred = predictor.with_wind(window.wind).predict(window.obs, HORIZONS)
     assert pred.shape == (3, 1, 12, 3)
     assert np.isfinite(pred).all()
+
+
+def test_multimodal_predictor_returns_hypotheses_and_probabilities():
+    config = TransformerConfig(d_model=32, n_heads=2, n_temporal_layers=1, n_modes=6)
+    predictor = TransformerPredictor(module=build_module(config), config=config)
+    window = make_window(3)
+
+    pred = predictor.with_wind(window.wind).predict(window.obs, HORIZONS)
+    assert pred.shape == (3, 6, 12, 3)
+
+    probabilities = predictor.last_probabilities
+    assert probabilities.shape == (3, 6)
+    assert probabilities.sum(axis=1) == pytest.approx(np.ones(3), abs=1e-5)
+    assert (probabilities >= 0).all()
+
+
+def test_multimodal_predictions_interpolate_per_hypothesis():
+    config = TransformerConfig(d_model=32, n_heads=2, n_temporal_layers=1, n_modes=4)
+    predictor = TransformerPredictor(module=build_module(config), config=config)
+    window = make_window(2)
+
+    dense = predictor.with_wind(window.wind).predict(window.obs, np.arange(1.0, 121.0))
+    native = predictor.with_wind(window.wind).predict(window.obs, HORIZONS)
+
+    assert dense.shape == (2, 4, 120, 3)
+    # Every hypothesis must line up with its own waypoints, not with another's.
+    for k in range(4):
+        assert dense[0, k, 9] == pytest.approx(native[0, k, 0], abs=1e-4)
 
 
 def test_predictions_are_interpolated_onto_dense_horizons():

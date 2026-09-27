@@ -43,6 +43,12 @@ class TransformerConfig:
     dropout: float = 0.1
     max_neighbours: int = 6
     n_waypoints: int = 12
+    # Number of trajectory hypotheses. 1 keeps the single-mode behaviour (and loads the
+    # checkpoints trained before this existed); 6 is the usual choice in motion forecasting.
+    # An aircraft on downwind may turn base or extend, and averaging those two futures
+    # produces a path it would never fly, so a single mode is a modelling error rather than
+    # merely a weaker model.
+    n_modes: int = 1
     use_wind: bool = True
     use_social: bool = True
     position_scale: float = 1000.0
@@ -93,7 +99,14 @@ def build_module(config: TransformerConfig):
             self.head = nn.Sequential(
                 nn.Linear(cfg.d_model * 2, cfg.d_model),
                 nn.GELU(),
-                nn.Linear(cfg.d_model, cfg.n_waypoints * 3),
+                nn.Linear(cfg.d_model, cfg.n_modes * cfg.n_waypoints * 3),
+            )
+            # One logit per hypothesis. With n_modes == 1 this is a constant and the
+            # softmax over it is 1.0, so single-mode behaviour is unchanged.
+            self.mode_logits = nn.Sequential(
+                nn.Linear(cfg.d_model * 2, cfg.d_model),
+                nn.GELU(),
+                nn.Linear(cfg.d_model, cfg.n_modes),
             )
 
         def encode(self, tracks: torch.Tensor) -> torch.Tensor:
@@ -132,8 +145,10 @@ def build_module(config: TransformerConfig):
             else:
                 context = torch.zeros_like(own)
 
-            out = self.head(torch.cat([own, context], dim=-1))
-            return out.view(-1, self.cfg.n_waypoints, 3)
+            pooled = torch.cat([own, context], dim=-1)
+            trajectories = self.head(pooled).view(-1, self.cfg.n_modes, self.cfg.n_waypoints, 3)
+            logits = self.mode_logits(pooled)
+            return trajectories, logits
 
     return SocialTransformer(config)
 
@@ -239,6 +254,8 @@ class TransformerPredictor(Predictor):
     device: str = "cpu"
     name: str = "transformer"
     _wind: np.ndarray | None = None
+    # Probabilities of the hypotheses returned by the last predict() call, shape (A, K).
+    last_probabilities: np.ndarray | None = None
 
     def with_wind(self, wind: np.ndarray) -> TransformerPredictor:
         self._wind = wind
@@ -255,30 +272,35 @@ class TransformerPredictor(Predictor):
 
         self.module.eval()
         with torch.no_grad():
-            local = (
-                self.module(
-                    torch.from_numpy(own).to(self.device),
-                    torch.from_numpy(others).to(self.device),
-                    torch.from_numpy(mask).to(self.device),
-                )
-                .cpu()
-                .numpy()
-                * self.config.target_scale
+            trajectories, logits = self.module(
+                torch.from_numpy(own).to(self.device),
+                torch.from_numpy(others).to(self.device),
+                torch.from_numpy(mask).to(self.device),
             )
+            local = trajectories.cpu().numpy() * self.config.target_scale
+            self.last_probabilities = torch.softmax(logits, dim=-1).cpu().numpy()
 
+        # (A, K, T, 3): to_world already understands a hypothesis dimension.
         world = to_world(local, frame)
-        return self._resample(world, horizons_s)[:, None, :, :]
+        return self._resample_modes(world, horizons_s)
 
-    def _resample(self, waypoints: np.ndarray, horizons_s: np.ndarray) -> np.ndarray:
+    def _resample_modes(self, waypoints: np.ndarray, horizons_s: np.ndarray) -> np.ndarray:
+        """Interpolate (A, K, T, 3) waypoints onto the requested horizons.
+
+        Alerting checks every second, so the 10 s waypoints must be filled in. Linear
+        interpolation adds no information the model did not produce.
+        """
         horizons = np.asarray(horizons_s, dtype=float)
         native = np.asarray(self.waypoint_horizons, dtype=float)
         if np.array_equal(horizons, native):
             return waypoints
 
-        out = np.empty((waypoints.shape[0], len(horizons), 3))
-        for axis in range(3):
-            for a in range(waypoints.shape[0]):
-                out[a, :, axis] = np.interp(horizons, native, waypoints[a, :, axis])
+        n_agents, n_modes = waypoints.shape[:2]
+        out = np.empty((n_agents, n_modes, len(horizons), 3))
+        for a in range(n_agents):
+            for k in range(n_modes):
+                for axis in range(3):
+                    out[a, k, :, axis] = np.interp(horizons, native, waypoints[a, k, :, axis])
         return out
 
 

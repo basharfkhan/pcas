@@ -69,6 +69,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--temporal-layers", type=int, default=2)
     parser.add_argument("--social-layers", type=int, default=1)
     parser.add_argument("--max-neighbours", type=int, default=6)
+    parser.add_argument(
+        "--modes",
+        type=int,
+        default=1,
+        help="Trajectory hypotheses. 1 is single-mode; 6 is the usual multimodal choice.",
+    )
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument(
         "--max-train-days", type=int, default=0, help="Cap training days (0 = all); for quick runs."
@@ -97,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         n_temporal_layers=args.temporal_layers,
         n_social_layers=args.social_layers,
         max_neighbours=args.max_neighbours,
+        n_modes=args.modes,
         dropout=args.dropout,
         use_social=not args.no_social,
         use_wind=not args.no_wind,
@@ -185,7 +192,25 @@ def main(argv: list[str] | None = None) -> int:
 
     optimiser = torch.optim.AdamW(module.parameters(), lr=args.lr, weight_decay=1e-4)
     schedule = torch.optim.lr_scheduler.ReduceLROnPlateau(optimiser, factor=0.5, patience=3)
-    loss_fn = nn.HuberLoss(delta=100.0 / config.target_scale)
+    # Winner-takes-all over hypotheses, plus a cross-entropy that teaches the mode logits
+    # which hypothesis won. Averaging the loss over all modes instead would pull every
+    # hypothesis towards the mean future, which is the single-mode failure this is meant to
+    # escape: an aircraft on downwind either turns base or extends, and the average of those
+    # is a path it would never fly.
+    regression = nn.HuberLoss(delta=100.0 / config.target_scale, reduction="none")
+    classification = nn.CrossEntropyLoss()
+
+    def loss_fn(outputs, targets):
+        trajectories, logits = outputs
+        # (B, K): mean error per hypothesis, used only to pick the winner.
+        per_mode = regression(trajectories, targets.unsqueeze(1).expand_as(trajectories)).mean(
+            dim=(2, 3)
+        )
+        winner = per_mode.argmin(dim=1)
+        best = per_mode.gather(1, winner.unsqueeze(1)).squeeze(1).mean()
+        if trajectories.shape[1] == 1:
+            return best
+        return best + 0.5 * classification(logits, winner)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -209,9 +234,13 @@ def main(argv: list[str] | None = None) -> int:
         errors = []
         with torch.no_grad():
             for xb, nb, mb, yb in val_loader:
-                pred = module(xb.to(device), nb.to(device), mb.to(device)).cpu()
-                delta = (pred[:, -1] - yb[:, -1]) * config.target_scale
-                errors.append(torch.linalg.norm(delta, dim=-1))
+                trajectories, _ = module(xb.to(device), nb.to(device), mb.to(device))
+                # minFDE: the best hypothesis per aircraft, which is what the evaluation
+                # metrics report for a multimodal model.
+                delta = (trajectories.cpu()[:, :, -1] - yb[:, -1].unsqueeze(1)) * (
+                    config.target_scale
+                )
+                errors.append(torch.linalg.norm(delta, dim=-1).min(dim=1).values)
         val_fde = float(torch.cat(errors).mean())
         schedule.step(val_fde)
 

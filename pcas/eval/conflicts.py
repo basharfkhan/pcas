@@ -157,12 +157,22 @@ def predicted_alerts(
     horizons_s: np.ndarray,
     criterion: ConflictCriterion,
     probability_threshold: float = 0.5,
+    mode_probabilities: np.ndarray | None = None,
 ) -> pd.DataFrame:
-    """Alerts from any predictor's trajectories.
+    """Alerts from any predictor's trajectories, with a conflict probability.
 
-    `pred` is (n_agents, K, T, 3). A pair alerts when at least
-    `probability_threshold` of the hypothesis pairings put them in violation; the alert
-    time is the earliest violating horizon among those hypotheses.
+    `pred` is (n_agents, K, T, 3). Two aircraft each carrying K hypotheses give K x K
+    possible futures for the pair, so the probability that they conflict is the weight of
+    the combinations in which they do:
+
+        P(conflict) = sum over (k, m) of p_i(k) * p_j(m) * [hypotheses k and m violate]
+
+    Treating each aircraft's hypotheses as independent is an approximation, since two
+    aircraft sequencing with each other are correlated, but it is an honest one and it turns
+    a yes/no alert into a number that can be weighed: "30% chance inside the next minute".
+
+    `mode_probabilities` is (n_agents, K). Without it every hypothesis is equally likely,
+    which reduces to the fraction of violating combinations.
     """
     pred = np.asarray(pred, dtype=float)
     if pred.ndim == 3:
@@ -170,19 +180,24 @@ def predicted_alerts(
     n_agents, n_hyp, _, _ = pred.shape
     horizons = np.asarray(horizons_s, dtype=float)
 
+    if mode_probabilities is None:
+        weights = np.full((n_agents, n_hyp), 1.0 / n_hyp)
+    else:
+        weights = np.asarray(mode_probabilities, dtype=float).reshape(n_agents, n_hyp)
+
     rows = []
     for i in range(n_agents):
         for j in range(i + 1, n_agents):
-            violating, earliest = 0, np.inf
+            probability, earliest = 0.0, np.inf
             for k in range(n_hyp):
-                horizontal = np.linalg.norm(pred[i, k, :, :2] - pred[j, k, :, :2], axis=-1)
-                vertical = np.abs(pred[i, k, :, 2] - pred[j, k, :, 2])
-                hits = np.flatnonzero(criterion.violated(horizontal, vertical))
-                if hits.size:
-                    violating += 1
-                    earliest = min(earliest, float(horizons[hits[0]]))
+                for m in range(n_hyp):
+                    horizontal = np.linalg.norm(pred[i, k, :, :2] - pred[j, m, :, :2], axis=-1)
+                    vertical = np.abs(pred[i, k, :, 2] - pred[j, m, :, 2])
+                    hits = np.flatnonzero(criterion.violated(horizontal, vertical))
+                    if hits.size:
+                        probability += float(weights[i, k] * weights[j, m])
+                        earliest = min(earliest, float(horizons[hits[0]]))
 
-            probability = violating / n_hyp
             if probability >= probability_threshold and np.isfinite(earliest):
                 rows.append({"i": i, "j": j, "alert_time_s": earliest, "probability": probability})
 
@@ -220,6 +235,9 @@ class AlertScorer:
 
         truth_pairs = {(int(r.i), int(r.j)): float(r.onset_s) for r in truth.itertuples()}
         alert_pairs = {(int(r.i), int(r.j)): float(r.alert_time_s) for r in alerts.itertuples()}
+        alert_probability = {
+            (int(r.i), int(r.j)): float(getattr(r, "probability", 1.0)) for r in alerts.itertuples()
+        }
 
         n = window.n_agents
         for i in range(n):
@@ -235,6 +253,7 @@ class AlertScorer:
                         "onset_s": onset,
                         "alerted": alerted,
                         "alert_time_s": alert_pairs.get((i, j)),
+                        "probability": alert_probability.get((i, j)),
                     }
                 )
         self._windows += 1
@@ -271,6 +290,30 @@ class AlertScorer:
             "mean_lead_time_s": float(detected["onset_s"].mean()) if len(detected) else nan,
         }
         return out
+
+    def reliability(self, bins=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0)) -> pd.DataFrame:
+        """Predicted conflict probability against how often a conflict actually followed.
+
+        A multimodal model states a number, and the number is only worth stating if it means
+        something: of the pairs called 30% likely, close to 30% should go on to conflict.
+        Only alerted pairs carry a probability, so this describes the calibration of the
+        alerts raised rather than of every pair in the airspace.
+        """
+        df = self.frame()
+        if "probability" not in df.columns:
+            return pd.DataFrame(columns=["probability_bin", "n", "predicted", "observed"])
+
+        alerted = df[df["alerted"] & df["probability"].notna()].copy()
+        if alerted.empty:
+            return pd.DataFrame(columns=["probability_bin", "n", "predicted", "observed"])
+
+        alerted["bin"] = pd.cut(alerted["probability"], bins=list(bins), include_lowest=True)
+        grouped = alerted.groupby("bin", observed=True).agg(
+            n=("event", "size"),
+            predicted=("probability", "mean"),
+            observed=("event", "mean"),
+        )
+        return grouped.reset_index().rename(columns={"bin": "probability_bin"})
 
     def detection_by_lead_time(self, edges=(0, 30, 60, 90, 120)) -> pd.DataFrame:
         """Detection rate split by how far ahead the event actually was.
