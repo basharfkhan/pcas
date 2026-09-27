@@ -11,15 +11,25 @@ worse, could place the same day on both sides of a split. Pick one source per ru
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+import pandas as pd
 
 from pcas.data.adsb import RawDay, read_raw_day
 from pcas.data.subsets import raw_day_files
 from pcas.data.tartan import find_sessions, read_session
 
+log = logging.getLogger(__name__)
+
 KINDS = ("trajair", "tartan")
+
+# Defects seen so far in the distributed data: a truncated line, a binary file, zero
+# altitudes, a bare "-" for longitude, and whole sessions too sparse to use. Each one used
+# to end a run, so reads are allowed to fail individually.
+_READ_FAILURES = (ValueError, OSError, KeyError, TypeError, pd.errors.ParserError)
 
 
 @dataclass
@@ -44,6 +54,24 @@ class Source:
         if test_days >= len(dates):
             raise ValueError(f"asked to hold out {test_days} of only {len(dates)} days")
         return dates[:-test_days], dates[-test_days:]
+
+
+def iter_days(source: Source, dates: list[str]) -> Iterator[RawDay]:
+    """Read each date, skipping and logging the ones that cannot be read.
+
+    A single corrupt file should not end a run that has already spent an hour building
+    windows. The count of skipped days is worth watching: it is a property of the dataset,
+    not of the code.
+    """
+    skipped = 0
+    for date in dates:
+        try:
+            yield source.read(date)
+        except _READ_FAILURES as exc:
+            skipped += 1
+            log.warning("skipping %s: %s", date, exc)
+    if skipped:
+        log.warning("skipped %d of %d days", skipped, len(dates))
 
 
 def open_source(kind: str, root: str | Path, airport: str = "kbtp") -> Source:

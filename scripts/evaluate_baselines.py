@@ -18,7 +18,7 @@ import pandas as pd
 
 from pcas.data.adsb import day_to_scenes
 from pcas.data.scenes import OBS_LEN, PRED_STEP, build_windows, future_offsets
-from pcas.data.sources import open_source
+from pcas.data.sources import iter_days, open_source
 from pcas.eval.metrics import MetricAccumulator
 from pcas.models.baselines import DEFAULT_BASELINES
 
@@ -28,11 +28,10 @@ log = logging.getLogger("pcas.evaluate")
 def load_windows(source, dates: list[str], stride: int, min_agents: int) -> list:
     """Build windows for the given dates only, so the dataset need not fit in RAM."""
     windows = []
-    for date in dates:
-        day = source.read(date)
+    for day in iter_days(source, dates):
         for scene in day_to_scenes(day, min_agents=min_agents):
             windows += build_windows(scene, stride=stride, min_agents=min_agents)
-        log.info("%s: %d windows so far", date, len(windows))
+        log.info("%s: %d windows so far", day.date, len(windows))
     return windows
 
 

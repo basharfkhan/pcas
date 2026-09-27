@@ -18,7 +18,7 @@ import pandas as pd
 
 from pcas.data.adsb import day_to_scenes
 from pcas.data.scenes import OBS_LEN, build_windows, future_offsets
-from pcas.data.sources import open_source
+from pcas.data.sources import iter_days, open_source
 from pcas.eval.conflicts import NMAC, PROXIMITY, AlertScorer, closure_rate_alerts, predicted_alerts
 from pcas.models.baselines import ConstantTurnRate, ConstantVelocity, KalmanConstantVelocity
 
@@ -36,11 +36,10 @@ def load_test_windows(source, test_days: int, stride: int) -> list:
     log.info("train days span %s to %s (not read here)", train[0], train[-1])
 
     windows = []
-    for date in test:
-        day = source.read(date)
+    for day in iter_days(source, test):
         for scene in day_to_scenes(day, min_agents=2):
             windows += build_windows(scene, stride=stride, min_agents=2)
-        log.info("  %s: %d windows", date, len(windows))
+        log.info("  %s: %d windows", day.date, len(windows))
     return windows
 
 

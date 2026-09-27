@@ -17,7 +17,7 @@ import pandas as pd
 
 from pcas.data.adsb import day_to_scenes
 from pcas.data.scenes import OBS_LEN, build_windows, future_offsets
-from pcas.data.sources import open_source
+from pcas.data.sources import iter_days, open_source
 from pcas.eval.conflicts import NMAC, PROXIMITY, AlertScorer, closure_rate_alerts, predicted_alerts
 from pcas.eval.metrics import MetricAccumulator
 from pcas.models.baselines import KalmanConstantVelocity
@@ -57,8 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         "closure_rate (tau=40s)": AlertScorer(criterion, window_stride_s=args.stride),
     }
 
-    for date in test_dates:
-        day = source.read(date)
+    for day in iter_days(source, test_dates):
         windows = []
         for scene in day_to_scenes(day, min_agents=1):
             windows += build_windows(scene, stride=args.stride, min_agents=1)
@@ -80,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             scorers["closure_rate (tau=40s)"].update(
                 w, closure_rate_alerts(w.obs, criterion, tau_s=40.0), 40.0
             )
-        log.info("%s: %d windows", date, len(windows))
+        log.info("%s: %d windows", day.date, len(windows))
 
     print("\ntrajectory error (metres):")
     print(pd.DataFrame({k: v.summary() for k, v in accs.items()}).T.round(1).to_string())

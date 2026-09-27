@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pcas.data.adsb import day_to_scenes
 from pcas.data.scenes import build_windows
-from pcas.data.sources import open_source
+from pcas.data.sources import iter_days, open_source
 from pcas.models.lstm import LSTMConfig, build_module, make_samples
 
 log = logging.getLogger("pcas.train")
@@ -27,8 +27,7 @@ log = logging.getLogger("pcas.train")
 def windows_for(source, dates: list[str], stride: int, min_agents: int) -> list:
     """Build windows for the given dates only, so the dataset need not fit in RAM."""
     windows = []
-    for date in dates:
-        day = source.read(date)
+    for day in iter_days(source, dates):
         for scene in day_to_scenes(day, min_agents=min_agents):
             # include_dense=False: training uses the 10 s waypoints, and the 1 Hz future
             # would dominate memory across hundreds of sessions.
