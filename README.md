@@ -257,33 +257,47 @@ Those high-recall rows are not deployable at 40 to 120 false alarms per hour, bu
 something worth knowing: the information needed to catch most conflicts two minutes ahead is
 present in the data. What is missing is a way to be selective about it.
 
-### The probabilities are not calibrated
+### The probabilities, before and after calibration
 
-`AlertScorer.reliability()` compares what the model claimed against what happened:
+`AlertScorer.reliability()` compares what the model claimed against what happened. Raw, it is
+overconfident by a factor of 2 to 4:
 
 | stated probability | conflicts actually followed | pairs |
 |---|---|---|
-| 0.28 | 0.07 | 3,135 |
-| 0.49 | 0.15 | 1,174 |
-| 0.69 | 0.27 | 579 |
-| 0.94 | 0.70 | 535 |
+| 0.28 | 0.071 | 3,135 |
+| 0.49 | 0.152 | 1,174 |
+| 0.69 | 0.269 | 579 |
+| 0.94 | 0.699 | 535 |
 
-**Overconfident by a factor of 2 to 4 across the range.** The ordering is sound, so a higher
-number really does mean a likelier conflict and thresholding it works, which is why the sweep
-above behaves sensibly. But these numbers cannot be shown to a pilot as percentages, and this
-project is not going to print "30% chance" next to a figure that means 7%.
+The ordering is sound, which is why thresholding it works, but a figure that reads as 30% and
+means 7% cannot be shown to a pilot. So the probability is calibrated post-hoc: isotonic
+regression, fitted on the **validation** sessions and reported on the **test** sessions, on
+89,395 aircraft pairs against a map learned from 37,076 it never saw.
 
-Three candidates for why, in the order worth testing: the two aircraft's hypotheses are
-combined as if independent, when aircraft sequencing with each other are correlated;
-winner-takes-all training optimises the winning trajectory and never asks the mode
-probabilities to be calibrated; and a hard conflict threshold turns a near miss into a
-coin-flip that the model has no way to express. Post-hoc calibration on the validation split
-(isotonic or Platt) is the cheap first move, and it is the next thing on the roadmap.
+| stated probability | conflicts actually followed | pairs |
+|---|---|---|
+| 0.29 | **0.249** | 522 |
+| 0.49 | **0.453** | 373 |
+| 0.78 | **0.679** | 28 |
+| 0.93 | **0.908** | 391 |
 
-A note on comparing numbers across models: minADE and minFDE over K hypotheses are best-of-K,
-so the 6-mode model's minFDE of 840 m is not comparable to the single-mode model's 2004 m.
-Alerting at a matched false alarm rate is the comparison that stays fair, because extra
-hypotheses produce extra alerts as well as extra chances to be right.
+**Expected calibration error falls from 0.0211 to 0.0005.** Say 49% and it happens 45% of the
+time. At a calibrated threshold of 0.5 the model raises 551 alerts on the 40 test sessions and
+81.5% of them are followed by a real conflict.
+
+Two things to be clear about. Isotonic regression assumes only monotonicity, which is precisely
+the property the raw table shows the model has, so it is the right shape of tool rather than a
+convenient one. And because a monotone map cannot reorder anything, **this buys honesty, not
+skill**: the detection versus false alarm curve is unchanged and every operating point survives
+with a label that now means something. Anyone reading the alerting tables above should not
+expect calibration to have moved them.
+
+Why the raw numbers were overconfident, in the order worth testing next: the two aircraft's
+hypotheses are combined as if independent, when aircraft sequencing with each other are
+correlated; winner-takes-all training optimises the winning trajectory and never asks the mode
+probabilities to be calibrated; and a hard conflict threshold turns a near miss into a coin flip
+the model has no way to express. Post-hoc calibration sidesteps all three, which is why it is
+worth doing first, but it does not explain them away.
 
 ### Corrections this section has been through
 
@@ -364,7 +378,7 @@ comparison stays with VATSIM, with its simulator caveat stated.
 - [ ] Like-for-like run on TrajAir's processed data and official split
 - [x] Multi-agent Transformer with social attention, plus the ablation that attributes the gain to context
 - [x] Multimodal predictions: K hypotheses, joint-mode conflict probability, reliability curve
-- [ ] Calibrate those probabilities (they are 2 to 4x overconfident; isotonic on the validation split)
+- [x] Calibrated conflict probability (isotonic, fitted on validation: ECE 0.0211 to 0.0005)
 - [ ] Ablations, error analysis by flight phase, failure gallery
 - [ ] Controlled vs. uncontrolled analysis on VATSIM
 - [ ] Live demo: predicted conflicts on live VATSIM traffic
