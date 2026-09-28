@@ -395,9 +395,17 @@ At a calibrated threshold of 0.5, across 1,688 conflicts in the held-out session
 
 ![The eight worst predictions](docs/figures/failure_gallery.png)
 
-The worst cases are mostly aircraft in the circuit that turn when the model expected them to
-continue, or continue when it expected a turn. Several show the model hedging correctly: one
-of the six hypotheses is close to what happened, but not the most likely one.
+The worst cases are not what the phase table might suggest. They are almost all fast aircraft
+leaving the area, covering 15 to 18 km in the two minutes, and the model consistently
+under-predicts how far they go: several panels show it getting the direction right and falling
+kilometres short, while others show it curling into a circuit pattern that the aircraft never
+flew. That is the same finding the phase table gives from the other direction, where a Kalman
+filter beats the model in transit, climb and descent. Trained on an airport where most traffic
+is doing circuits, the model has learned that aircraft turn back, and it applies that to
+aircraft that are simply leaving.
+
+It also shows a limit of the phase labels: they describe the observed instant, so an aircraft
+low and near the field is labelled "pattern" even when it is about to depart at speed.
 
 **Two things the gallery surfaced that the tables do not.**
 
