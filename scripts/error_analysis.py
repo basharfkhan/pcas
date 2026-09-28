@@ -39,6 +39,15 @@ from pcas.models.load import load_predictor
 
 log = logging.getLogger("pcas.error_analysis")
 
+# Ground speed above which a 'track' is a corrupted position report rather than an
+# aircraft. Fast jets transit this airspace at roughly 250 m/s, so this only catches
+# teleports: the worst example jumped 531 km in two minutes.
+IMPLAUSIBLE_SPEED_MS = 300.0
+# Errors of tens of kilometres come from corrupted inputs or the occasional absurd
+# extrapolation. They are counted and described in the README rather than plotted, because one
+# such panel rescales the gallery until the other seven are unreadable.
+GALLERY_MAX_ERROR_M = 20_000.0
+
 COLORS = {
     "Kalman": "#eb6834",
     "no social": "#1baf7a",
@@ -81,9 +90,27 @@ def collect(source, dates, models, multimodal, horizons, dense, stride):
                     row[f"ade_{name}"] = float(errors[name][i].mean())
                 per_aircraft.append(row)
 
-            # Keep the worst social-model predictions for the gallery.
-            social_fde = errors["social"][:, -1]
-            worst.append((float(social_fde.max()), int(social_fde.argmax()), window, phases))
+            # Keep the worst predictions for the gallery, judged by the model that the
+            # gallery actually draws. Selecting with one model and plotting another was a
+            # bug: the captioned error did not match the paths on the panel.
+            gallery_pred = multimodal.with_wind(window.wind).predict(window.obs, horizons)
+            gallery_fde = displacement(gallery_pred, window.future).min(axis=1)[:, -1]
+
+            # A track that implies several hundred metres per second is a corrupted position
+            # report rather than an aircraft, in the truth or in the observed window, and the
+            # model occasionally answers an ordinary window with an absurd extrapolation.
+            # Both are real and both are reported, but one of them on a panel squashes the
+            # other seven flat, so the gallery shows how the model fails on ordinary traffic.
+            travelled = np.linalg.norm(window.future[:, -1, :2] - window.obs[:, -1, :2], axis=-1)
+            step_speed = np.linalg.norm(np.diff(window.obs[:, :, :2], axis=1), axis=-1).max(axis=1)
+            showable = (
+                (travelled / horizons[-1] < IMPLAUSIBLE_SPEED_MS)
+                & (step_speed < IMPLAUSIBLE_SPEED_MS)
+                & (gallery_fde < GALLERY_MAX_ERROR_M)
+            )
+            if showable.any():
+                candidates = np.where(showable, gallery_fde, -np.inf)
+                worst.append((float(candidates.max()), int(candidates.argmax()), window, phases))
 
             if window.n_agents < 2 or window.future_dense is None:
                 continue

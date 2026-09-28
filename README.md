@@ -339,6 +339,84 @@ probabilities to be calibrated; and a hard conflict threshold turns a near miss 
 the model has no way to express. Post-hoc calibration sidesteps all three, which is why it is
 worth doing first, but it does not explain them away.
 
+## Where the model is wrong, and whether its explanation holds
+
+Error on the 40 held-out sessions, split by what each aircraft was doing. Phases come from
+motion alone (height above the field, climb rate, range, turn rate), since the data carries no
+flight plans.
+
+![Median error by flight phase](docs/figures/error_by_phase.png)
+
+| phase | aircraft | Kalman | no social | social | vs Kalman |
+|---|---|---|---|---|---|
+| pattern turn | 23,181 | 5,617 | 2,114 | **1,369** | **+76%** |
+| final approach | 8,891 | 2,895 | 1,378 | **803** | **+72%** |
+| pattern | 62,499 | 4,300 | 2,728 | **1,691** | **+61%** |
+| descent | 11,556 | **1,140** | 1,550 | 1,176 | -3% |
+| climb | 7,816 | **1,099** | 1,702 | 1,258 | -14% |
+| transit | 28,777 | **824** | 1,264 | 980 | -19% |
+
+Median 120 s error in metres. The split is stark and it is the right shape: the model wins by
+61 to 76 percent exactly where aircraft manoeuvre and conflicts happen, and loses by 3 to 19
+percent where aircraft fly in a straight line and a Kalman filter is already the correct model
+of the physics. A system built on this should use both, choosing by phase.
+
+### The mechanism test
+
+The ablation earlier showed *that* seeing other aircraft helps. It does not show *why*, and the
+obvious alternative explanation is that attention simply adds useful capacity. If the stated
+explanation is right, though, the advantage should appear only when there is a neighbour to
+attend to.
+
+| neighbours in the window | aircraft | no social | social | social gain |
+|---|---|---|---|---|
+| **0** | 46,702 | 1,920 | 1,935 | **-0.8%** |
+| 1 | 44,346 | 2,104 | 1,252 | **+40.5%** |
+| 2 | 30,924 | 2,145 | 1,050 | +51.1% |
+| 3 to 4 | 18,727 | 2,125 | 991 | +53.4% |
+| 5+ | 2,021 | 1,990 | 971 | +51.2% |
+
+**With nobody to attend to, the social model has no advantage at all.** The gain switches on at
+the first neighbour and then flattens. That is what the explanation predicts, and it is a
+sharper result than the ablation on its own: the mechanism is not merely present, it is the
+thing doing the work.
+
+### What it misses
+
+At a calibrated threshold of 0.5, across 1,688 conflicts in the held-out sessions:
+
+- 721 caught, 967 missed, and 1,010 false alarms out of 87,267 quiet pairs.
+- **Missed conflicts arrive at a median 68 s ahead; caught ones at 15 s.** The system is far
+  better at the convergences that are nearly upon you than at the ones still developing, which
+  is the same limitation the alerting curves show, seen from another angle.
+- Misses concentrate in pattern/pattern pairs (298 of 967): two aircraft in the circuit,
+  neither having turned yet, where nothing in the observed motion says they are about to
+  conflict.
+
+![The eight worst predictions](docs/figures/failure_gallery.png)
+
+The worst cases are mostly aircraft in the circuit that turn when the model expected them to
+continue, or continue when it expected a turn. Several show the model hedging correctly: one
+of the six hypotheses is close to what happened, but not the most likely one.
+
+**Two things the gallery surfaced that the tables do not.**
+
+A corrupted position report produces a corrupted prediction. When an aircraft's observed track
+teleports mid-window, the model extrapolates hundreds of kilometres from it, and the physics
+baselines do the same. Nothing tells a model that its input was impossible, so a deployed
+system would need to reject such a window rather than predict from it.
+
+And occasionally the model produces an absurd extrapolation from an unremarkable window: one
+prediction ran 400 km from an aircraft in a normal climb. That is a genuine failure mode rather
+than a data defect, and it is the strongest argument in this project for a sanity bound on the
+output, since a warning system that can emit a 400 km trajectory can also emit a confident
+nonsense alert.
+
+Together these account for 31 of 142,720 aircraft windows, 0.02%. They do not move the medians
+above (1,342 m against 1,341 m with them excluded), and the gallery excludes them so that it
+shows how the model fails on ordinary traffic rather than being dominated by one pathological
+panel.
+
 ### Corrections this section has been through
 
 Recorded because the method matters more than the number.
@@ -419,7 +497,7 @@ comparison stays with VATSIM, with its simulator caveat stated.
 - [x] Multi-agent Transformer with social attention, plus the ablation that attributes the gain to context
 - [x] Multimodal predictions: K hypotheses, joint-mode conflict probability, reliability curve
 - [x] Calibrated conflict probability (isotonic, fitted on validation: ECE 0.0211 to 0.0005)
-- [ ] Ablations, error analysis by flight phase, failure gallery
+- [x] Error analysis by flight phase, the mechanism test, and a failure gallery
 - [ ] Controlled vs. uncontrolled analysis on VATSIM
 - [ ] Live demo: predicted conflicts on live VATSIM traffic
 
