@@ -24,6 +24,7 @@ attention cost bounded when a busy scene holds twenty aircraft.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,6 +32,8 @@ import numpy as np
 
 from pcas.models.baselines import Predictor
 from pcas.models.framing import features, scene_frames, to_world
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -312,7 +315,33 @@ def load_predictor(path: str | Path, device: str | None = None) -> TransformerPr
     config = TransformerConfig(**blob["config"])
 
     module = build_module(config)
-    module.load_state_dict(blob["state_dict"])
+    _load_state(module, blob["state_dict"], config)
     module.to(device).eval()
 
     return TransformerPredictor(module=module, config=config, device=device)
+
+
+def _load_state(module, state_dict, config: TransformerConfig) -> None:
+    """Load weights, tolerating only the one incompatibility that is provably harmless.
+
+    Checkpoints trained before multimodal output have no `mode_logits` head. For a
+    single-mode model that head is inert: a softmax over one logit is 1.0 whatever the
+    weights are, so leaving it at its initialisation cannot change a prediction. Any other
+    missing or unexpected key means the checkpoint does not match the architecture, and
+    loading it anyway would silently produce a differently-shaped model.
+    """
+    missing, unexpected = module.load_state_dict(state_dict, strict=False)
+    if not missing and not unexpected:
+        return
+
+    inert = config.n_modes == 1 and all(key.startswith("mode_logits.") for key in missing)
+    if unexpected or not inert:
+        raise RuntimeError(
+            f"checkpoint does not match the architecture: missing {list(missing)}, "
+            f"unexpected {list(unexpected)}"
+        )
+    if missing:
+        log.info(
+            "checkpoint predates multimodal output; its inert mode_logits head is left "
+            "at initialisation (n_modes=1, so its softmax is 1.0 regardless)"
+        )

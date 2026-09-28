@@ -254,3 +254,34 @@ def test_predictions_return_to_airport_coordinates():
     pred = predictor.with_wind(window.wind).predict(window.obs, np.array([10.0]))
     for i in range(2):
         assert np.linalg.norm(pred[i, 0, 0] - window.obs[i, -1]) < 3000.0
+
+
+def test_checkpoint_without_mode_logits_loads_when_single_mode(tmp_path):
+    # Checkpoints trained before multimodal output have no mode_logits head. With one mode
+    # that head is inert, so loading must succeed rather than fail on a technicality.
+    from pcas.models.transformer import load_predictor
+
+    config = TransformerConfig(d_model=32, n_heads=2, n_temporal_layers=1, n_modes=1)
+    module = build_module(config)
+    state = {k: v for k, v in module.state_dict().items() if not k.startswith("mode_logits.")}
+
+    path = tmp_path / "old.pt"
+    torch.save({"state_dict": state, "config": vars(config), "model": "transformer"}, path)
+
+    predictor = load_predictor(path, device="cpu")
+    pred = predictor.with_wind(np.array([0.0, 0.0])).predict(make_window(2).obs, HORIZONS)
+    assert pred.shape == (2, 1, 12, 3)
+
+
+def test_mismatched_checkpoint_is_refused(tmp_path):
+    from pcas.models.transformer import load_predictor
+
+    config = TransformerConfig(d_model=32, n_heads=2, n_temporal_layers=1, n_modes=1)
+    module = build_module(config)
+    state = {k: v for k, v in module.state_dict().items() if not k.startswith("head.")}
+
+    path = tmp_path / "broken.pt"
+    torch.save({"state_dict": state, "config": vars(config), "model": "transformer"}, path)
+
+    with pytest.raises(RuntimeError, match="does not match the architecture"):
+        load_predictor(path, device="cpu")
