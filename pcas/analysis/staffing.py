@@ -6,10 +6,10 @@ feed reports every staffed position alongside every aircraft position, which tur
 staffing into a variable and gives a natural experiment: the same field, the same kind of
 traffic, sometimes with a tower online and sometimes without.
 
-**The confound is the whole problem.** Controllers do not appear at random. They log on to
-busy fields at busy times, and more aircraft in a volume mechanically means more pairs and
-more close passes. A raw comparison of staffed against unstaffed minutes therefore
-measures traffic, not control, and it will do so with a confident-looking number. Every
+Controllers do not appear at random. They log on to busy fields at busy times, and more
+aircraft in a volume mechanically means more pairs and more close passes, so a raw
+comparison of staffed against unstaffed minutes measures traffic rather than control and
+returns a confident-looking number for it. Every
 rate here is computed inside strata of (hour of day, aircraft in the volume) and only then
 pooled. Strata seen in only one arm contribute nothing.
 
@@ -40,7 +40,7 @@ EARTH_R = 6_371_000.0
 FIELD_RADIUS_M = 10 * NM
 MAX_AGL_FT = 5_000.0
 
-# Airborne only, and this is not a detail. Aircraft parked at adjacent gates are a few
+# Airborne only. Aircraft parked at adjacent gates are a few
 # hundred metres apart at identical altitude, so a volume that includes the ramp reports
 # every airport apron as one continuous close encounter: the first run of this analysis
 # came back with 399 close pairs per 1,000, four hundred times what the airborne data
@@ -414,9 +414,9 @@ def stratified_rates(
 
     With `by_field`, the field joins the stratum and the comparison becomes strictly
     within-field: the same airport, the same traffic level, the same time of day, staffed
-    against unstaffed. That is the actual natural experiment, and without it a field that is
-    always staffed is being compared against a different field that never is, which is a
-    comparison between airports wearing the clothes of a comparison between staffing.
+    against unstaffed. That is the natural experiment this analysis claims to run. Without it
+    a field that is always staffed ends up compared against a different field that never is,
+    so part of what gets measured is the difference between those two airports.
     """
     keys = ["aircraft_bin", "hour_bin"]
     if by_field:

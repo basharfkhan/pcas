@@ -259,10 +259,10 @@ Read as advice about which method to deploy where:
    10.0. Median lead time runs 3 to 23 s against 1 to 3 s for the physics methods.
 4. **Past 90 s something finally works, barely.** 0.126 at ~10.8 false alarms per hour, twice
    Kalman's 0.063 at a comparable budget. Two minutes of warning remains mostly out of reach.
-5. **The knob matters as much as the model.** Limiting the horizon keeps a predictor inside the
-   regime where it is accurate; tightening the separation margin instead wrecks near-term
-   detection (the Transformer drops to 0.348 at 0 to 30 s) while buying the long bands. Which
-   knob to use is an operational choice, not a detail.
+5. **The sensitivity knob changes the result as much as the model does.** Limiting the horizon
+   keeps a predictor inside the regime where it is accurate; tightening the separation margin
+   instead wrecks near-term detection (the Transformer drops to 0.348 at 0 to 30 s) while
+   buying the long bands. Which knob a deployed system uses is an operational decision.
 
 Two earlier conclusions in this file were withdrawn when this model arrived: "the 60 to 90 s
 band is not a clear win" and "nothing works at 90 to 120 s". Both were true of the physics
@@ -432,8 +432,6 @@ panel.
 
 ### Corrections this section has been through
 
-Recorded because the method matters more than the number.
-
 **The sample was too small, twice.** A 7-day version reported 28% and 17% detection in the
 60 to 90 s and 90 to 120 s bands; at 528 conflicts those fell to 5% and 2%, and at 1,686
 conflicts the ordering firmed up but the 60 to 90 s advantage shrank to nothing much. Every
@@ -485,11 +483,10 @@ aircraft pairs.
 
 ![Close-pair rates with and without a tower](docs/figures/controller_presence.png)
 
-**The confound is the entire problem.** Controllers log on to busy fields at busy times, and
-more aircraft in a volume mechanically means more close pairs. A raw comparison therefore
-measures traffic and reports it as an effect of control. Worse, it does so in the flattering
-direction, which is exactly when a result stops being checked. So every rate here is computed
-inside a stratum of **the same airport, the same number of aircraft in the volume, and the
+Controllers log on to busy fields at busy times, and more aircraft in a volume mechanically
+means more close pairs, so a raw comparison measures traffic and attributes it to control.
+It also errs in the flattering direction, which makes it less likely to be questioned. Every
+rate here is therefore computed inside a stratum of **the same airport, the same number of aircraft in the volume, and the
 same six-hour block of the day**, and only then pooled, weighted by how much evidence both
 arms bring to each stratum.
 
@@ -506,12 +503,11 @@ middle row as: a pair of aircraft near an unstaffed field spends 2.0% of its tim
 mile and 1,000 ft of another aircraft, and 0.6% of it when the same field is staffed at the
 same traffic level and hour.
 
-**The gradient is the point.** The effect is strongest at the tightest gate and fades as the
-gate widens, until at 3 nm it has mostly gone. That is the shape the mechanism predicts: a
-controller does not reduce how much traffic is around, which is what a 3 nm gate mostly
-measures, and stratification has already removed that anyway. A flat ratio across gates would
-have suggested something was wrong with the strata; a swinging one would have meant the
-finding lived in the threshold.
+The effect is strongest at the tightest gate and has mostly gone by 3 nm. That gradient is
+what a controller's influence should look like: a 3 nm gate mostly counts how much traffic
+is in the volume, which control does not change and which the strata have already matched
+on. A ratio that stayed flat across the gates would point to a problem with the strata, and
+one that swung around would mean the result depended on where the threshold was drawn.
 
 ### What was checked before believing it
 
@@ -524,19 +520,19 @@ finding lived in the threshold.
 | leave out any of the five heaviest fields | 0.288 to 0.301 |
 | **placebo: staffing shuffled within each field x count x hour cell** | 0.94, 1.17, 1.10, 1.05, 1.08 |
 
-The placebo is the one that matters. It runs the identical pooling over labels that carry no
-information, and it lands on 1. A bug in the weighting would have shown up there as an
+The placebo is the strongest of these: it runs the identical pooling over labels that carry
+no information and lands on 1. A bug in the weighting would have shown up there as an
 effect, so it tests the code as well as the design.
 
-The comparison also has to be within field, and that is not a formality: pooled across
-airports the same data gives 0.54 rather than 0.29, because the unstaffed arm is drawn from
-small fields and the staffed arm from hubs. Cross-field, it is partly a comparison between
-airports wearing the clothes of a comparison between staffing.
+Keeping the comparison within a field changes the answer: pooled across airports the same
+data gives 0.54 rather than 0.29, because the unstaffed arm is drawn mostly from small
+fields and the staffed arm from hubs. Cross-field, part of what is being measured is the
+difference between airports rather than the difference between staffing.
 
-**Where the convergences actually are.** Away from the 25 busiest fields, the unstaffed rate
-is 43.5 per 1,000 against 9.2 at the hubs, a 4.7x higher baseline, with the same proportional
-reduction when someone is watching. Small fields without a tower are where close
-convergences concentrate, which is the population this project chose to work on.
+**Where the convergences are.** Away from the 25 busiest fields the unstaffed rate is 43.5
+per 1,000 against 9.2 at the hubs, a 4.7x higher baseline, with the same proportional
+reduction when someone is watching. Close convergences concentrate at small fields without
+a tower, which is the traffic this project set out to model.
 
 ### Two defects this analysis hit, and what they cost
 
@@ -547,21 +543,21 @@ needs both an altitude floor and a speed floor, because either alone leaks: an a
 holding short is stationary on the ground, and one rolling down a long runway passes
 rotation speed while still at field elevation.
 
-**Then the opposite.** With ground traffic gone, 452 pairs contained zero violations. At 15 s
+**The fix then caused the opposite problem.** With ground traffic gone, 452 pairs contained zero violations. At 15 s
 sampling a pair closing at 200 kt covers 0.8 nm between consecutive samples, so asking
 whether they were ever inside 0.5 nm *at a sample instant* discards most of the encounters
 that happened. That is why the volume is 10 nm and 5,000 ft AGL and why five gates are
-reported instead of one: the sampling rate decides which questions are answerable, and the
-honest response is to report the curve rather than to pick the threshold that works.
+reported instead of one: at this sampling rate a single tight threshold cannot be measured
+reliably, and reporting the curve avoids picking whichever one happens to work.
 
 ### What this does not show
 
 It is a simulation network. These are people flying online, not the national airspace system,
 and the sizes here should not be read as what a real tower is worth. Two specific limits:
 the same data cannot separate a controller's effect from the fact that **pilots who fly with
-ATC online may simply be different pilots**, and 77 hours is one week of one season. What
-survives those limits is the direction, the gradient, and the fact that it holds at 149
-airports rather than at a favourable few.
+ATC online may simply be different pilots**, and 77 hours is one week of one season. What holds up
+despite them is the direction, the gradient across gates, and the fact that both appear at
+149 airports rather than at a favourable few.
 
 For PCAS, the premise holds: the convergences it predicts are roughly three times more
 frequent at a field with nobody watching, and their baseline rate is highest at exactly the
