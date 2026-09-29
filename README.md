@@ -477,9 +477,9 @@ warns about happens more often when nobody is watching, which is the premise the
 rests on and the one the ADS-B datasets cannot test: KBTP's tower status never changes, and
 KAGC did not survive the data quality check. On VATSIM it changes hourly.
 
-77 hours of the public feed, collected here rather than downloaded: 15,394 snapshots, 21.2M
-position reports, 676 airports located from the feed itself, 744k field-snapshots, 231k
-aircraft pairs.
+92 hours of the public feed, 79 of them collected (the machine sleeps), gathered here rather
+than downloaded: 19,056 snapshots, 24.6M position reports, 723 airports located from the
+feed itself, 879k field-snapshots, 248k aircraft pairs.
 
 ![Close-pair rates with and without a tower](docs/figures/controller_presence.png)
 
@@ -492,13 +492,13 @@ arms bring to each stratum.
 
 | separation gate | no tower | tower online | ratio |
 |---|---|---|---|
-| 500 ft / 100 ft (NMAC) | 1.39 | **0.28** | 0.20 |
-| 0.5 nm / 500 ft | 9.85 | **2.16** | 0.22 |
-| 1 nm / 1,000 ft | 20.36 | **5.96** | 0.29 |
-| 2 nm / 1,000 ft | 54.62 | 23.29 | 0.43 |
-| 3 nm / 2,000 ft | 112.06 | 67.75 | 0.61 |
+| 500 ft / 100 ft (NMAC) | 1.29 | **0.25** | 0.19 |
+| 0.5 nm / 500 ft | 9.56 | **1.99** | 0.21 |
+| 1 nm / 1,000 ft | 19.59 | **5.80** | 0.30 |
+| 2 nm / 1,000 ft | 52.12 | 24.00 | 0.46 |
+| 3 nm / 2,000 ft | 109.61 | 68.91 | 0.63 |
 
-Pair samples inside each gate, per 1,000, pooled over 431 within-field strata. Read the
+Pair samples inside each gate, per 1,000, pooled over 459 within-field strata. Read the
 middle row as: a pair of aircraft near an unstaffed field spends 2.0% of its time within a
 mile and 1,000 ft of another aircraft, and 0.6% of it when the same field is staffed at the
 same traffic level and hour.
@@ -513,25 +513,25 @@ one that swung around would mean the result depended on where the threshold was 
 
 | check | result |
 |---|---|
-| within field, all traffic levels | 0.293 |
-| **exactly two aircraft** in the volume, so the traffic stratum is an exact match rather than a bin | 0.382 |
-| top 25 fields by pairs | 0.274 |
-| every other field | 0.301 |
-| leave out any of the five heaviest fields | 0.288 to 0.301 |
-| **placebo: staffing shuffled within each field x count x hour cell** | 0.94, 1.17, 1.10, 1.05, 1.08 |
+| within field, all traffic levels | 0.296 |
+| **exactly two aircraft** in the volume, so the traffic stratum is an exact match rather than a bin | 0.365 |
+| top 25 fields by pairs | 0.305 |
+| every other field | 0.292 |
+| leave out any of the five heaviest fields | 0.292 to 0.303 |
+| **placebo: staffing shuffled within each field x count x hour cell** | 0.95, 1.01, 0.98, 0.96, 1.00 |
 
 The placebo is the strongest of these: it runs the identical pooling over labels that carry
 no information and lands on 1. A bug in the weighting would have shown up there as an
 effect, so it tests the code as well as the design.
 
 Keeping the comparison within a field changes the answer: pooled across airports the same
-data gives 0.54 rather than 0.29, because the unstaffed arm is drawn mostly from small
+data gives 0.53 rather than 0.30, because the unstaffed arm is drawn mostly from small
 fields and the staffed arm from hubs. Cross-field, part of what is being measured is the
 difference between airports rather than the difference between staffing.
 
-**Where the convergences are.** Away from the 25 busiest fields the unstaffed rate is 43.5
-per 1,000 against 9.2 at the hubs, a 4.7x higher baseline, with the same proportional
-reduction when someone is watching. Close convergences concentrate at small fields without
+**Where the convergences are.** Away from the 25 busiest fields the unstaffed rate is 42.5
+per 1,000 against 8.4 at the hubs, a 5.1x higher baseline, with the same proportional
+reduction when someone is watching (0.29 against 0.31). Close convergences concentrate at small fields without
 a tower, which is the traffic this project set out to model.
 
 ### Two defects this analysis hit, and what they cost
@@ -555,9 +555,9 @@ reliably, and reporting the curve avoids picking whichever one happens to work.
 It is a simulation network. These are people flying online, not the national airspace system,
 and the sizes here should not be read as what a real tower is worth. Two specific limits:
 the same data cannot separate a controller's effect from the fact that **pilots who fly with
-ATC online may simply be different pilots**, and 77 hours is one week of one season. What holds up
-despite them is the direction, the gradient across gates, and the fact that both appear at
-149 airports rather than at a favourable few.
+ATC online may simply be different pilots**, and four days is one week of one season. What
+holds up despite them is the direction, the gradient across gates, and the fact that both
+appear at 159 airports rather than at a favourable few.
 
 For PCAS, the premise holds: the convergences it predicts are roughly three times more
 frequent at a field with nobody watching, and their baseline rate is highest at exactly the
@@ -603,7 +603,12 @@ comparison stays with VATSIM, with its simulator caveat stated.
 - [x] Calibrated conflict probability (isotonic, fitted on validation: ECE 0.0211 to 0.0005)
 - [x] Error analysis by flight phase, the mechanism test, and a failure gallery
 - [x] Controlled vs. uncontrolled analysis on VATSIM (within-field, stratified, with a placebo)
-- [ ] Live demo: predicted conflicts on live VATSIM traffic
+- [ ] ~~Live demo: predicted conflicts on live VATSIM traffic~~. Not planned. The model reads
+  11 samples at 1 Hz and the pipeline splits a track at any gap over 5 s, while the feed polls
+  every 15 s. Running it live would mean interpolating eleven 1 Hz points out of one 15 s
+  segment, inventing the short-horizon motion the social attention reads. It would look
+  convincing and would mostly redraw a straight line. A variant retrained at the feed's
+  cadence would be the honest version of this
 
 ## Data sources and terms
 
