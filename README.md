@@ -100,6 +100,11 @@ field can be compared staffed vs. unstaffed:
 close-approach detection, and simulator pilots do not always fly like real ones. VATSIM
 carries the analysis and the live demo; ADS-B carries the quantitative results.
 
+The answer is below, in
+[Does a controller's presence actually change anything?](#does-a-controllers-presence-actually-change-anything):
+at the same field, same traffic level and same hour, close convergences are about three
+times more frequent with no tower online.
+
 ## The collector
 
 Polls the public VATSIM datafeed every 15 s (its refresh rate - the config refuses to go
@@ -467,6 +472,101 @@ moved. The 2-layer model limped through, which is why it was still improving whe
 epoch cap; the 3-layer model collapsed to predicting a constant and scored worse than Kalman.
 Scaling the targets fixed it.
 
+## Does a controller's presence actually change anything?
+
+Everything above asks whether aircraft can be predicted. This asks whether the thing PCAS
+warns about happens more often when nobody is watching, which is the premise the project
+rests on and the one the ADS-B datasets cannot test: KBTP's tower status never changes, and
+KAGC did not survive the data quality check. On VATSIM it changes hourly.
+
+77 hours of the public feed, collected here rather than downloaded: 15,394 snapshots, 21.2M
+position reports, 676 airports located from the feed itself, 744k field-snapshots, 231k
+aircraft pairs.
+
+![Close-pair rates with and without a tower](docs/figures/controller_presence.png)
+
+**The confound is the entire problem.** Controllers log on to busy fields at busy times, and
+more aircraft in a volume mechanically means more close pairs. A raw comparison therefore
+measures traffic and reports it as an effect of control. Worse, it does so in the flattering
+direction, which is exactly when a result stops being checked. So every rate here is computed
+inside a stratum of **the same airport, the same number of aircraft in the volume, and the
+same six-hour block of the day**, and only then pooled, weighted by how much evidence both
+arms bring to each stratum.
+
+| separation gate | no tower | tower online | ratio |
+|---|---|---|---|
+| 500 ft / 100 ft (NMAC) | 1.39 | **0.28** | 0.20 |
+| 0.5 nm / 500 ft | 9.85 | **2.16** | 0.22 |
+| 1 nm / 1,000 ft | 20.36 | **5.96** | 0.29 |
+| 2 nm / 1,000 ft | 54.62 | 23.29 | 0.43 |
+| 3 nm / 2,000 ft | 112.06 | 67.75 | 0.61 |
+
+Pair samples inside each gate, per 1,000, pooled over 431 within-field strata. Read the
+middle row as: a pair of aircraft near an unstaffed field spends 2.0% of its time within a
+mile and 1,000 ft of another aircraft, and 0.6% of it when the same field is staffed at the
+same traffic level and hour.
+
+**The gradient is the point.** The effect is strongest at the tightest gate and fades as the
+gate widens, until at 3 nm it has mostly gone. That is the shape the mechanism predicts: a
+controller does not reduce how much traffic is around, which is what a 3 nm gate mostly
+measures, and stratification has already removed that anyway. A flat ratio across gates would
+have suggested something was wrong with the strata; a swinging one would have meant the
+finding lived in the threshold.
+
+### What was checked before believing it
+
+| check | result |
+|---|---|
+| within field, all traffic levels | 0.293 |
+| **exactly two aircraft** in the volume, so the traffic stratum is an exact match rather than a bin | 0.382 |
+| top 25 fields by pairs | 0.274 |
+| every other field | 0.301 |
+| leave out any of the five heaviest fields | 0.288 to 0.301 |
+| **placebo: staffing shuffled within each field x count x hour cell** | 0.94, 1.17, 1.10, 1.05, 1.08 |
+
+The placebo is the one that matters. It runs the identical pooling over labels that carry no
+information, and it lands on 1. A bug in the weighting would have shown up there as an
+effect, so it tests the code as well as the design.
+
+The comparison also has to be within field, and that is not a formality: pooled across
+airports the same data gives 0.54 rather than 0.29, because the unstaffed arm is drawn from
+small fields and the staffed arm from hubs. Cross-field, it is partly a comparison between
+airports wearing the clothes of a comparison between staffing.
+
+**Where the convergences actually are.** Away from the 25 busiest fields, the unstaffed rate
+is 43.5 per 1,000 against 9.2 at the hubs, a 4.7x higher baseline, with the same proportional
+reduction when someone is watching. Small fields without a tower are where close
+convergences concentrate, which is the population this project chose to work on.
+
+### Two defects this analysis hit, and what they cost
+
+**Every airport ramp read as a continuous near miss.** The first run returned 399 close pairs
+per 1,000, roughly 400x plausible. Aircraft parked at adjacent gates are a few hundred metres
+apart at identical altitude, which satisfies a 0.5 nm / 500 ft criterion perfectly. The fix
+needs both an altitude floor and a speed floor, because either alone leaks: an aircraft
+holding short is stationary on the ground, and one rolling down a long runway passes
+rotation speed while still at field elevation.
+
+**Then the opposite.** With ground traffic gone, 452 pairs contained zero violations. At 15 s
+sampling a pair closing at 200 kt covers 0.8 nm between consecutive samples, so asking
+whether they were ever inside 0.5 nm *at a sample instant* discards most of the encounters
+that happened. That is why the volume is 10 nm and 5,000 ft AGL and why five gates are
+reported instead of one: the sampling rate decides which questions are answerable, and the
+honest response is to report the curve rather than to pick the threshold that works.
+
+### What this does not show
+
+It is a simulation network. These are people flying online, not the national airspace system,
+and the sizes here should not be read as what a real tower is worth. Two specific limits:
+the same data cannot separate a controller's effect from the fact that **pilots who fly with
+ATC online may simply be different pilots**, and 77 hours is one week of one season. What
+survives those limits is the direction, the gradient, and the fact that it holds at 149
+airports rather than at a favourable few.
+
+For PCAS, the premise holds: the convergences it predicts are roughly three times more
+frequent at a field with nobody watching, and their baseline rate is highest at exactly the
+small fields where no tower exists to be online in the first place.
+
 ## What the data is actually like
 
 Both datasets are real recordings, and most of the work was making them safe to model. Six
@@ -506,7 +606,7 @@ comparison stays with VATSIM, with its simulator caveat stated.
 - [x] Multimodal predictions: K hypotheses, joint-mode conflict probability, reliability curve
 - [x] Calibrated conflict probability (isotonic, fitted on validation: ECE 0.0211 to 0.0005)
 - [x] Error analysis by flight phase, the mechanism test, and a failure gallery
-- [ ] Controlled vs. uncontrolled analysis on VATSIM
+- [x] Controlled vs. uncontrolled analysis on VATSIM (within-field, stratified, with a placebo)
 - [ ] Live demo: predicted conflicts on live VATSIM traffic
 
 ## Data sources and terms
